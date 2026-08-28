@@ -1,1 +1,16 @@
 ./node_modules
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Logs and runtime output
+logs/
+*.log
+uploads/
+tmp/
+temp/
+coverage/
+.cache/
+.DS_Store
