@@ -20,3 +20,15 @@ export const registerInstrumentSchema = z.object({
   d: z.string().refine((val) => !isNaN(val) && Number(val) > 0, 'd must be > 0')
 });
 
+export const observationsSchema = z.object({
+  readings: z
+    .array(
+      z.object({
+        step: z.number().int().nonnegative(),
+        indicated: z.coerce.number().finite(),
+        deltaL: z.coerce.number().finite(),
+      }),
+    )
+    .length(9),
+  overallResult: z.enum(["PASS", "FAIL"]).optional(),
+});

@@ -4,8 +4,10 @@ const TestPointSchema = new mongoose.Schema({
   step: { type: Number, required: true },
   description: { type: String, required: true },
   load: { type: mongoose.Schema.Types.Decimal128, required: true },
-  mpe: { type: mongoose.Schema.Types.Decimal128, required: true }
-});
+  mpe: { type: mongoose.Schema.Types.Decimal128, required: true },
+  
+},{ _id: false });
+
 
 const InstrumentSchema = new mongoose.Schema(
   {
