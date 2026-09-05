@@ -473,6 +473,13 @@ export const getApprovedInspectionReports = async (req, res) => {
   return res.json({ success: true, data: reports });
 };
 
+export const verifyCertificate = async (req, res) => {
+  const inspection = await Inspection.findOne({ "certificate.certificateNumber": req.params.number, inspectionStatus: "APPROVED" }).populate("instrumentId");
+  if (!inspection) return res.status(404).json({ success: false, message: "Certificate not found or no longer valid." });
+  const certificate = inspection.certificate.toObject ? inspection.certificate.toObject() : inspection.certificate;
+  return res.json({ success: true, valid: new Date(certificate.validUntil) >= new Date(), certificate, instrument: inspection.instrumentId, tests: { weighing: inspection.weighingTest?.passed === true, eccentricity: inspection.eccentricityTest?.passed === true, repeatability: inspection.repeatabilityTest?.passed === true } });
+};
+
 export const approveInspection = async (req, res) => {
   try {
     const inspection = await Inspection.findOne({
