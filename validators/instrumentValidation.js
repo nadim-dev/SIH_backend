@@ -32,3 +32,12 @@ export const observationsSchema = z.object({
     .length(9),
   overallResult: z.enum(["PASS", "FAIL"]).optional(),
 });
+
+export const eccentricityObservationsSchema = z.object({
+  testLoad: z.coerce.number().finite().positive(),
+  positions: z.array(z.object({
+    step: z.number().int().min(1).max(5),
+    indicated: z.coerce.number().finite(),
+    deltaL: z.coerce.number().finite(),
+  })).length(5),
+});

@@ -55,6 +55,11 @@ const InspectionSchema = new mongoose.Schema(
 
     // Overall Physical Test Status
     allTestsPassed: { type: Boolean, default: false },
+    inspectionStatus: {
+      type: String,
+      enum: ['IN_PROGRESS', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED'],
+      default: 'IN_PROGRESS'
+    } ,
 
     // -------------------------------------------------------------
     // AUDIT & MAKER-CHECKER WORKFLOW
