@@ -10,15 +10,9 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const mySecretKey = process.env.mySecretKey;
 
-const allowedOrigins = ["http://localhost:5173", "https://nawipro12.netlify.app", process.env.FRONTEND_URL]
-  .filter(Boolean)
-  .map((origin) => origin.replace(/\/$/, ""));
-
 app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin.replace(/\/$/, ""))) return callback(null, true);
-    return callback(new Error(`CORS origin not allowed: ${origin}`));
-  },
+  // Reflect the requesting origin so deployed and local frontends can connect.
+  origin: true,
   credentials: true,
 }));
 

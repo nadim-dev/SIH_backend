@@ -1,5 +1,5 @@
 import express from "express";
-import { registerInstrument, getInstrumentForTesting, submitInstrumentObservations, submitEccentricityObservations, submitRepeatabilityObservations, submitFullInspection, getPendingApprovalInspections, getApprovedInspectionReports, approveInspection } from "../controllers/instrumentController.js";
+import { registerInstrument, getInstrumentForTesting, submitInstrumentObservations, submitEccentricityObservations, submitRepeatabilityObservations, submitFullInspection, getPendingApprovalInspections, getApprovedInspectionReports, verifyCertificate, approveInspection } from "../controllers/instrumentController.js";
 
 import { uploadInstrumentPicture } from "../middleware/instrumentPictureUpload.js";
 const router=express.Router();
