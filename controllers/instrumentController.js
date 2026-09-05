@@ -521,7 +521,7 @@ export const approveInspection = async (req, res) => {
       certificateNumber,
       issueDate,
       validUntil,
-      qrVerificationUrl: `${process.env.FRONTEND_URL || "http://localhost:5173"}/certificate/${certificateNumber}`,
+      qrVerificationUrl: `${(process.env.FRONTEND_URL || "https://nawipro12.netlify.app").replace(/\/$/, "")}/certificate/${certificateNumber}`,
     };
     instrument.status = "APPROVED";
     await Promise.all([inspection.save(), instrument.save()]);
