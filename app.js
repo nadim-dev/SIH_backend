@@ -10,12 +10,17 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const mySecretKey = process.env.mySecretKey;
 
-app.use(
-  cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:5173",
-    credentials: true,
-  })
-);
+const allowedOrigins = ["http://localhost:5173", "https://nawipro12.netlify.app", process.env.FRONTEND_URL]
+  .filter(Boolean)
+  .map((origin) => origin.replace(/\/$/, ""));
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin.replace(/\/$/, ""))) return callback(null, true);
+    return callback(new Error(`CORS origin not allowed: ${origin}`));
+  },
+  credentials: true,
+}));
 
 app.use(express.json());
 app.use(cookieParser(mySecretKey));
