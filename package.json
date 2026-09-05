@@ -1,7 +1,9 @@
 {
   "type": "module",
+   
   "scripts": {
-    "dev": "node    --no-deprecation  --env-file=.env  app.js"
+    "dev": "node    --no-deprecation  --env-file=.env  app.js",
+    "start": "node app.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
