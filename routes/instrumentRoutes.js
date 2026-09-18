@@ -1,12 +1,18 @@
 import express from "express";
-import { registerInstrument, getInstrumentForTesting, submitInstrumentObservations, submitEccentricityObservations, submitRepeatabilityObservations, submitFullInspection, getPendingApprovalInspections, getApprovedInspectionReports, verifyCertificate, approveInspection } from "../controllers/instrumentController.js";
+import { registerInstrument, getMyEvaluations, getEvaluationDocuments, uploadEvaluationDocument, completeEvaluationDocuments, getInstrumentForTesting, submitInstrumentObservations, submitEccentricityObservations, submitRepeatabilityObservations, submitFullInspection, getPendingApprovalInspections, getApprovedInspectionReports, verifyCertificate, approveInspection } from "../controllers/instrumentController.js";
 
 import { uploadInstrumentPicture } from "../middleware/instrumentPictureUpload.js";
+import { uploadEvaluationDocument as documentUpload } from "../middleware/evaluationDocumentUpload.js";
+import checkAuth from "../middleware/authMiddleware.js";
 const router=express.Router();
 
 
 
-router.post('/register', uploadInstrumentPicture.single('nameplatePhoto'), registerInstrument);
+router.post('/register',checkAuth,uploadInstrumentPicture.single('nameplatePhoto'), registerInstrument);
+router.get('/my-evaluations', checkAuth, getMyEvaluations);
+router.get('/:applicationId/documents', checkAuth, getEvaluationDocuments);
+router.post('/:applicationId/documents', checkAuth, documentUpload.single('document'), uploadEvaluationDocument);
+router.post('/:applicationId/documents/complete', checkAuth, completeEvaluationDocuments);
 router.get('/admin/pending-approval', getPendingApprovalInspections);
 router.get('/admin/approved-reports', getApprovedInspectionReports);
 router.get('/certificate/:number', verifyCertificate);

@@ -26,6 +26,11 @@ const InstrumentSchema = new mongoose.Schema(
         'Weighbridge / Vehicle Scale'
       ]
     },
+    registeredBy:{
+       type: mongoose.Schema.Types.ObjectId,
+       ref: "User",
+       required: true
+    },
     accuracyClass: {
       type: String,
       required: true,

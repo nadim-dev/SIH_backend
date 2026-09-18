@@ -17,6 +17,22 @@ export const logoutUser = async (req, res) => {
   }
 };
 
+export const getCurrentUser = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id)
+      .select("name email role accountStatus")
+      .lean();
+
+    if (!user) {
+      return res.status(401).json({ message: "User no longer exists" });
+    }
+
+    return res.status(200).json({ currentUser: user });
+  } catch (error) {
+    return res.status(500).json({ message: "Unable to restore session" });
+  }
+};
+
 
 export const loginUser = async (req, res) => {
   console.log("Login controller function is running");
@@ -30,7 +46,7 @@ export const loginUser = async (req, res) => {
 
     const { password, email } = sanitize(data);
     const user = await User.findOne({ email }).lean();
-    console.log("user",user);
+   
 
     if (!user) {
       return res.status(404).json({ message: "user dosen't exist" });

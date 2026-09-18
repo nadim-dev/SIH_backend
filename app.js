@@ -7,7 +7,7 @@ import cookieParser from "cookie-parser";
 
 const app = express();
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 4000;
 const mySecretKey = process.env.mySecretKey;
 
 app.use(cors({
