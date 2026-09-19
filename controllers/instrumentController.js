@@ -9,7 +9,12 @@ import { observationsSchema, eccentricityObservationsSchema } from "../validator
 import crypto from "node:crypto";
 import Evaluation from "../models/evaluationModel.js";
 import Document from "../models/documentModel.js";
+import TestEnvironment from "../models/testEnviromentModel.js";
 import { generateApplicationNumber } from "../utils/generateApplicationNumber.js";
+import testRules from "../rules/r76-1-2006-test-rules.json"  with { type: "json" } ;
+import TestPlan from "../models/testPlanModel.js";
+import { generateTestPlan } from "../utils/generateTestPlan.js";
+
 
 
 Decimal.set({ precision: 28, rounding: Decimal.ROUND_HALF_UP });
@@ -109,7 +114,7 @@ export const registerInstrument = async (req, res) => {
       return res.status(400).json({ success: false, error: "Nameplate photo is required." });
     
     const cleanBody = sanitize(req.body);
-    const {manufacturer,modelNumber,serialNumber,instrumentType,accuracyClass,unit,max,min,e,d} = registerInstrumentSchema.parse(cleanBody);
+    const {manufacturer,modelNumber,serialNumber,instrumentType,accuracyClass,unit,technology,indicationType,tareDevice,max,min,e,d} = registerInstrumentSchema.parse(cleanBody);
 
     // 1. Check for Duplicate Serial Number
     const existing = await Instrument.findOne({ serialNumber }).lean();
@@ -133,6 +138,9 @@ export const registerInstrument = async (req, res) => {
       instrumentType,
       accuracyClass,
       unit,
+      technology,
+      indicationType,
+      tareDevice,
       max: mongoose.Types.Decimal128.fromString(max),
       min: mongoose.Types.Decimal128.fromString(min),
       e: mongoose.Types.Decimal128.fromString(e),
@@ -211,6 +219,83 @@ export const getEvaluationDocuments = async (req, res) => {
   }
 };
 
+//* controller for generating test plan
+
+
+export const generateTestPlanController = async (req, res) => {
+  try {
+    // The frontend workflow uses the human-readable application number
+    // (for example, NAWI-2026-007), not Evaluation._id.
+    const { evaluationId: applicationNumber } = req.params;
+
+    // 1. Find evaluation
+    const evaluation = await Evaluation.findOne({ applicationNumber });
+
+    if (!evaluation) {
+      return res.status(404).json({
+        success: false,
+        message: "Evaluation not found",
+      });
+    }
+
+    // 2. Find instrument
+    const instrument = await Instrument.findById(
+      evaluation.instrumentId
+    );
+
+    if (!instrument) {
+      return res.status(404).json({
+        success: false,
+        message: "Instrument not found",
+      });
+    }
+
+    // 3. Generate applicable tests. Reuse an existing plan on refresh/retry.
+    const tests = generateTestPlan(instrument);
+
+    const existingPlan = await TestPlan.findOne({ evaluationId: evaluation._id });
+    if (existingPlan) {
+      return res.status(200).json({
+        success: true,
+        message: "Test plan already generated",
+        data: { ...existingPlan.toObject(), instrument },
+      });
+    }
+
+    // 4. Create TestPlan
+    const testPlan = await TestPlan.create({
+      evaluationId: evaluation._id,
+      instrumentId: instrument._id,
+      standard: "OIML R 76-1",
+      standardVersion: "2006",
+      tests,
+      status: "GENERATED",
+    });
+
+    // 5. Update evaluation
+    evaluation.testPlanId = testPlan._id;
+    evaluation.testPlanStatus = "COMPLETED";
+    evaluation.testingStatus = "PENDING";
+    evaluation.status = "TESTING";
+
+    await evaluation.save();
+
+    return res.status(201).json({
+      success: true,
+      message: "Test plan generated successfully",
+      data: { ...testPlan.toObject(), instrument },
+    });
+
+  } catch (error) {
+    console.error(error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to generate test plan",
+    });
+  }
+};
+
 export const uploadEvaluationDocument = async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ message: "A document file is required." });
@@ -280,6 +365,68 @@ export const completeEvaluationDocuments = async (req, res) => {
     return res.status(500).json({ message: "Failed to complete document upload." });
   }
 };
+
+export const saveEvaluationEnvironment = async (req, res) => {
+  try {
+    const { temperature, relativeHumidity, barometricPressure } = req.body;
+    const parsedTemperature = Number(temperature);
+    const parsedHumidity = Number(relativeHumidity);
+    const hasPressure = barometricPressure !== undefined && barometricPressure !== null && String(barometricPressure).trim() !== "";
+    const parsedPressure = hasPressure ? Number(barometricPressure) : null;
+
+    if (!Number.isFinite(parsedTemperature) || !Number.isFinite(parsedHumidity)) {
+      return res.status(400).json({ message: "Temperature and relative humidity are required." });
+    }
+    if (parsedHumidity < 0 || parsedHumidity > 100) {
+      return res.status(400).json({ message: "Relative humidity must be between 0 and 100." });
+    }
+    if (hasPressure && !Number.isFinite(parsedPressure)) {
+      return res.status(400).json({ message: "Barometric pressure must be a valid number." });
+    }
+
+    const evaluation = await Evaluation.findOne({
+      applicationNumber: req.params.applicationId,
+      testingOfficerId: req.user._id,
+    }).select("_id status environmentStatus");
+    if (!evaluation) return res.status(404).json({ message: "Evaluation not found." });
+    if (!["ENVIRONMENT_PENDING", "TEST_PLAN_PENDING"].includes(evaluation.status)) {
+      return res.status(400).json({ message: "Complete the previous evaluation stage first." });
+    }
+
+    const environment = await TestEnvironment.findOneAndUpdate(
+      { evaluationId: evaluation._id },
+      {
+        evaluationId: evaluation._id,
+        temperature: parsedTemperature,
+        relativeHumidity: parsedHumidity,
+        barometricPressure: parsedPressure,
+        source: "MANUAL",
+        recordedAt: new Date(),
+        recordedBy: req.user._id,
+      },
+      { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true },
+    );
+
+    const updatedEvaluation = await Evaluation.findByIdAndUpdate(
+      evaluation._id,
+      {
+        $set: {
+          testEnvironmentId: environment._id,
+          environmentStatus: "COMPLETED",
+          testPlanStatus: "PENDING",
+          status: "TEST_PLAN_PENDING",
+          progress: 35,
+        },
+      },
+      { new: true, runValidators: true },
+    );
+
+    return res.json({ success: true, data: { environment, evaluation: updatedEvaluation } });
+  } catch (error) {
+    return res.status(400).json({ message: error.message || "Failed to save laboratory environment." });
+  }
+};
+
 
 export const getInstrumentForTesting = async (req, res) => {
   try {

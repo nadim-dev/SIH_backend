@@ -1,0 +1,111 @@
+
+
+
+{
+  "metadata": {
+    "standard": "OIML R 76-1:2006",
+    "purpose": "SIH prototype test-plan selection",
+    "note": "This is a simplified demo rule catalog, not a complete legal implementation of OIML R 76. Final applicability and calculations must be validated against the applicable edition and laboratory procedure."
+  },
+  "tests": [
+    {
+      "code": "GENERAL_EXAMINATION",
+      "name": "General Examination",
+      "category": "EXAMINATION",
+      "clause": "A.1",
+      "selection": {
+        "always": true
+      }
+    },
+    {
+      "code": "WEIGHING_PERFORMANCE",
+      "name": "Weighing Performance Test",
+      "category": "PERFORMANCE",
+      "clause": "A.4",
+      "selection": {
+        "always": true
+      }
+    },
+    {
+      "code": "REPEATABILITY",
+      "name": "Repeatability Test",
+      "category": "PERFORMANCE",
+      "clause": "A.4",
+      "selection": {
+        "always": true
+      }
+    },
+    {
+      "code": "ECCENTRICITY",
+      "name": "Eccentricity Test",
+      "category": "PERFORMANCE",
+      "clause": "A.4",
+      "selection": {
+        "always": true
+      }
+    },
+    {
+      "code": "TARE",
+      "name": "Tare Test",
+      "category": "PERFORMANCE",
+      "clause": "A.4.6",
+      "selection": {
+        "all": [
+          {
+            "field": "tareDevice",
+            "operator": "EQ",
+            "value": true
+          }
+        ]
+      }
+    },
+    {
+      "code": "TEMPERATURE_INFLUENCE",
+      "name": "Temperature Influence Test",
+      "category": "INFLUENCE_FACTOR",
+      "clause": "A.5.3",
+      "selection": {
+        "always": true
+      }
+    },
+    {
+      "code": "ENDURANCE",
+      "name": "Endurance Test",
+      "category": "ENDURANCE",
+      "clause": "A.6",
+      "selection": {
+        "all": [
+          {
+            "field": "accuracyClass",
+            "operator": "IN",
+            "value": [
+              "II",
+              "III",
+              "IIII"
+            ]
+          },
+          {
+            "field": "maxKg",
+            "operator": "LTE",
+            "value": 100
+          }
+        ]
+      }
+    },
+    {
+      "code": "ELECTRONIC_TESTS",
+      "name": "Electronic Instrument Tests",
+      "category": "ELECTRONIC",
+      "clause": "B",
+      "selection": {
+        "all": [
+          {
+            "field": "technology",
+            "operator": "EQ",
+            "value": "ELECTRONIC"
+          }
+        ]
+      }
+    }
+  ]
+}

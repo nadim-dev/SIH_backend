@@ -41,23 +41,29 @@ const evaluationSchema = new mongoose.Schema(
     // --------------------------------------------------
 
     status: {
-      type: String,
-      enum: [
-        "DOCUMENTS_PENDING",
-        "DOCUMENT_REVIEW",
-        "TEST_PLAN_PENDING",
-        "ENVIRONMENT_PENDING",
-        "TESTING",
-        "COMPLIANCE_EVALUATION",
-        "SUPERVISOR_REVIEW",
-        "CORRECTION_REQUIRED",
-        "REPORT_GENERATION",
-        "COMPLETED",
-        "REJECTED",
+       type: String,
+       enum: [
+         "DOCUMENTS_PENDING",
+         "DOCUMENT_REVIEW",
+     
+         "ENVIRONMENT_PENDING",
+     
+         "TEST_PLAN_PENDING",
+     
+         "TESTING",
+     
+         "COMPLIANCE_EVALUATION",
+     
+         "SUPERVISOR_REVIEW",
+         "CORRECTION_REQUIRED",
+     
+         "REPORT_GENERATION",
+         "COMPLETED",
+         "REJECTED",
       ],
-      default: "DOCUMENTS_PENDING",
-      index: true,
-    },
+       default: "DOCUMENTS_PENDING",
+       index: true,
+     },     
 
     // --------------------------------------------------
     // WORKFLOW PROGRESS

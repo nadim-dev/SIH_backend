@@ -42,6 +42,21 @@ const InstrumentSchema = new mongoose.Schema(
       enum: ['kg', 'g', 'mg', 't'],
       default: 'kg'
     },
+    technology: {
+      type: String,
+      enum: ['Electronic', 'Mechanical'],
+      default: 'Electronic',
+    },
+    indicationType: {
+      type: String,
+      enum: ['Digital', 'Analog'],
+      default: 'Digital',
+    },
+    tareDevice: {
+      type: String,
+      enum: ['Yes', 'No'],
+      default: 'Yes',
+    },
     max: { type: mongoose.Schema.Types.Decimal128, required: true },
     min: { type: mongoose.Schema.Types.Decimal128, required: true },
     e: { type: mongoose.Schema.Types.Decimal128, required: true },
