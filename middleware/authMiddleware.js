@@ -30,9 +30,11 @@ export default async function checkAuth(req,res,next){
  
 export const allowRoles = (...roles) => {
     return async (req, res, next) => {
-        const role=req.user.role;
+        const normalizeRole = (value) => String(value || "").trim().toUpperCase().replace(/\s+/g, "_");
+        const role = normalizeRole(req.user.role);
+        const allowedRoles = roles.map(normalizeRole);
 
-        if (!roles.includes(role))
+        if (!allowedRoles.includes(role))
             return res.status(403).json({ message: 'Forbidden' });
         
 

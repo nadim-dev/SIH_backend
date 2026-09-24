@@ -25,15 +25,26 @@ const userSchema = new mongoose.Schema(
 
     role: {
       type: String,
-      enum: ["NAWI_ADMIN", "LAB_SUPERVISOR", "TESTING OFFICER"],
+      enum: ["NAWI_ADMIN", "LAB SUPERVISOR", "TESTING OFFICER"],
       required: true,
     },
 
-    labId: {
+    // Human-readable identifier for staff; MongoDB _id remains the internal key.
+    officerId: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      unique: true,
+      sparse: true,
+    },
+
+    supervisorId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Lab",
+      ref: "User",
       default: null,
     },
+
+    labId: { type: mongoose.Schema.Types.ObjectId, ref: "Laboratory", default: null },
 
     phone: {
       type: String,
@@ -71,23 +82,8 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-//* NAWI Admin does not belong to a specific lab.
-//* Lab users must have a labId.
-
-
-userSchema.pre("validate", function () {
-  if (this.role === "NAWI_ADMIN") {
-    this.labId = null;
-  }
-
-  if (
-    (this.role === "LAB_SUPERVISOR" ||
-      this.role === "TESTING_PERSON") &&
-    !this.labId
-  ) {
-    throw new Error("Lab ID is required for lab users");
-  }
-});
+userSchema.index({ role: 1, labId: 1 });
+userSchema.index({ role: 1, supervisorId: 1 });
 
 const User = mongoose.model("User", userSchema);
 

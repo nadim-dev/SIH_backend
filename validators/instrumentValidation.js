@@ -17,6 +17,12 @@ export const registerInstrumentSchema = z.object({
   technology: z.enum(['Electronic', 'Mechanical']).default('Electronic'),
   indicationType: z.enum(['Digital', 'Analog']).default('Digital'),
   tareDevice: z.enum(['Yes', 'No']).default('Yes'),
+  tareType: z.enum(['Additive', 'Subtractive']).default('Subtractive'),
+  maximumTare: z.string().refine((val) => !isNaN(val) && Number(val) >= 0, 'Maximum tare must be >= 0').default('0'),
+  hasPrintingDevice: z.preprocess(
+    (value) => value === true || value === 'true' || value === 'Yes',
+    z.boolean(),
+  ).default(false),
   max: z.string().refine((val) => !isNaN(val) && Number(val) > 0, 'Max must be > 0'),
   min: z.string().refine((val) => !isNaN(val) && Number(val) > 0, 'Min must be > 0'),
   e: z.string().refine((val) => !isNaN(val) && Number(val) > 0, 'e must be > 0'),

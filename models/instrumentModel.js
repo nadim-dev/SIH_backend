@@ -1,13 +1,5 @@
 import mongoose from 'mongoose';
 
-const TestPointSchema = new mongoose.Schema({
-  step: { type: Number, required: true },
-  description: { type: String, required: true },
-  load: { type: mongoose.Schema.Types.Decimal128, required: true },
-  mpe: { type: mongoose.Schema.Types.Decimal128, required: true },
-  
-},{ _id: false });
-
 
 const InstrumentSchema = new mongoose.Schema(
   {
@@ -57,6 +49,12 @@ const InstrumentSchema = new mongoose.Schema(
       enum: ['Yes', 'No'],
       default: 'Yes',
     },
+    tareType: { type: String, enum: ['Additive', 'Subtractive'], default: 'Subtractive' },
+    maximumTare: { type: mongoose.Schema.Types.Decimal128, default: 0 },
+    hasPrintingDevice: {
+      type: Boolean,
+      default: false,
+    },
     max: { type: mongoose.Schema.Types.Decimal128, required: true },
     min: { type: mongoose.Schema.Types.Decimal128, required: true },
     e: { type: mongoose.Schema.Types.Decimal128, required: true },
@@ -68,24 +66,16 @@ const InstrumentSchema = new mongoose.Schema(
       enum: ['REGISTERED', 'TEST_IN_PROGRESS', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED'],
       default: 'REGISTERED'
     },
-    testPoints: [TestPointSchema]
-    ,observations: { type: [mongoose.Schema.Types.Mixed], default: [] }
-    ,testResult: { type: String, enum: ['PASS', 'FAIL'] }
+    testResult: { type: String, enum: ['PASS', 'FAIL'] }
   },
   {
     timestamps: true,
     toJSON: {
       // Helper to convert Decimal128 to clean strings when sending JSON to React
       transform: (doc, ret) => {
-        ['max', 'min', 'e', 'd'].forEach((key) => {
+      ['max', 'min', 'e', 'd', 'maximumTare'].forEach((key) => {
           if (ret[key]) ret[key] = ret[key].toString();
         });
-        if (ret.testPoints) {
-          ret.testPoints.forEach((tp) => {
-            if (tp.load) tp.load = tp.load.toString();
-            if (tp.mpe) tp.mpe = tp.mpe.toString();
-          });
-        }
         return ret;
       }
     }

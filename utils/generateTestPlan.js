@@ -44,6 +44,7 @@ export const generateTestPlan = (instrument) =>
       sequence: index + 1,
       code: rule.code,
       name: rule.name,
+      description: rule.description,
       category: rule.category,
       clause: rule.clause,
       status: "PENDING",

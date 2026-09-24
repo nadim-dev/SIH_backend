@@ -1,6 +1,5 @@
 {
   "type": "module",
-   
   "scripts": {
     "dev": "node    --no-deprecation  --env-file=.env  app.js",
     "start": "node app.js"

@@ -4,6 +4,9 @@ import instrumentRoutes from "./routes/instrumentRoutes.js";
 import { connectDB } from "./config/mongoose.js";
 import authRoutes from "./routes/authRoutes.js";
 import cookieParser from "cookie-parser";
+import notificationRoutes from "./routes/notificationRoutes.js";
+import laboratoryRoutes from "./routes/laboratoryRoutes.js";
+import auditLogRoutes from "./routes/auditLogRoutes.js";
 
 const app = express();
 
@@ -21,6 +24,9 @@ app.use(cookieParser(mySecretKey));
 
 app.use("/api/instruments", instrumentRoutes);
 app.use("/api/auth", authRoutes);
+app.use("/api/notifications", notificationRoutes);
+app.use("/api/laboratories", laboratoryRoutes);
+app.use("/api/audit-logs", auditLogRoutes);
 
 const startServer = async () => {
   try {

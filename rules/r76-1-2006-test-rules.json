@@ -11,6 +11,7 @@
     {
       "code": "GENERAL_EXAMINATION",
       "name": "General Examination",
+      "description": "Visual and functional examination of the instrument, markings and devices.",
       "category": "EXAMINATION",
       "clause": "A.1",
       "selection": {
@@ -20,6 +21,7 @@
     {
       "code": "WEIGHING_PERFORMANCE",
       "name": "Weighing Performance Test",
+      "description": "Determination of weighing performance using test loads.",
       "category": "PERFORMANCE",
       "clause": "A.4",
       "selection": {
@@ -29,6 +31,7 @@
     {
       "code": "REPEATABILITY",
       "name": "Repeatability Test",
+      "description": "Verification of repeatability under the same conditions and load.",
       "category": "PERFORMANCE",
       "clause": "A.4",
       "selection": {
@@ -38,6 +41,7 @@
     {
       "code": "ECCENTRICITY",
       "name": "Eccentricity Test",
+      "description": "Determination of error when the load is applied at different positions.",
       "category": "PERFORMANCE",
       "clause": "A.4",
       "selection": {
@@ -47,6 +51,7 @@
     {
       "code": "TARE",
       "name": "Tare Test",
+      "description": "Verification of tare device functionality and accuracy.",
       "category": "PERFORMANCE",
       "clause": "A.4.6",
       "selection": {
@@ -62,6 +67,7 @@
     {
       "code": "TEMPERATURE_INFLUENCE",
       "name": "Temperature Influence Test",
+      "description": "Determination of the influence of temperature on the indication.",
       "category": "INFLUENCE_FACTOR",
       "clause": "A.5.3",
       "selection": {
@@ -71,6 +77,7 @@
     {
       "code": "ENDURANCE",
       "name": "Endurance Test",
+      "description": "Verification of metrological performance after repeated loading cycles.",
       "category": "ENDURANCE",
       "clause": "A.6",
       "selection": {
@@ -88,21 +95,6 @@
             "field": "maxKg",
             "operator": "LTE",
             "value": 100
-          }
-        ]
-      }
-    },
-    {
-      "code": "ELECTRONIC_TESTS",
-      "name": "Electronic Instrument Tests",
-      "category": "ELECTRONIC",
-      "clause": "B",
-      "selection": {
-        "all": [
-          {
-            "field": "technology",
-            "operator": "EQ",
-            "value": "ELECTRONIC"
           }
         ]
       }

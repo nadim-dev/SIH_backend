@@ -49,14 +49,10 @@ const evaluationSchema = new mongoose.Schema(
          "ENVIRONMENT_PENDING",
      
          "TEST_PLAN_PENDING",
-     
          "TESTING",
-     
          "COMPLIANCE_EVALUATION",
-     
          "SUPERVISOR_REVIEW",
          "CORRECTION_REQUIRED",
-     
          "REPORT_GENERATION",
          "COMPLETED",
          "REJECTED",
@@ -106,6 +102,7 @@ const evaluationSchema = new mongoose.Schema(
         "PENDING",
         "APPROVED",
         "CORRECTION_REQUIRED",
+        "RESUMED",
       ],
       default: "LOCKED",
     },

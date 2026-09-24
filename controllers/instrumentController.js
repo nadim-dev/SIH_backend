@@ -4,6 +4,7 @@ import { registerInstrumentSchema } from "../validators/instrumentValidation.js"
 import Instrument from "../models/instrumentModel.js";
 import Inspection from "../models/Inspection.js";
 import { uploadBufferToCloudinary } from "../utils/uploadImagetoCloudinary.js";
+import { reverseGeocode } from "../utils/reverseGeocode.js";
 import { sanitize } from "../utils/sanitize.js";
 import { observationsSchema, eccentricityObservationsSchema } from "../validators/instrumentValidation.js";
 import crypto from "node:crypto";
@@ -13,7 +14,26 @@ import TestEnvironment from "../models/testEnviromentModel.js";
 import { generateApplicationNumber } from "../utils/generateApplicationNumber.js";
 import testRules from "../rules/r76-1-2006-test-rules.json"  with { type: "json" } ;
 import TestPlan from "../models/testPlanModel.js";
+import User from "../models/userModel.js";
+import Notification from "../models/notificationModel.js";
+import Report from "../models/reportModel.js";
 import { generateTestPlan } from "../utils/generateTestPlan.js";
+import { recordAudit } from "../utils/auditLogger.js";
+
+const OIML_MPE_INTERVALS = {
+  I: [50000, 200000],
+  II: [5000, 20000],
+  III: [500, 2000],
+  IIII: [50, 200],
+};
+
+const getMpeForLoad = (accuracyClass, load, e) => {
+  const limits = OIML_MPE_INTERVALS[String(accuracyClass || "").trim().toUpperCase()];
+  if (!limits) throw new Error(`Unsupported accuracy class: ${accuracyClass}`);
+  const intervals = new Decimal(load).div(e);
+  const multiplier = intervals.lte(limits[0]) ? 0.5 : intervals.lte(limits[1]) ? 1 : 1.5;
+  return new Decimal(e).times(multiplier);
+};
 
 
 
@@ -114,7 +134,7 @@ export const registerInstrument = async (req, res) => {
       return res.status(400).json({ success: false, error: "Nameplate photo is required." });
     
     const cleanBody = sanitize(req.body);
-    const {manufacturer,modelNumber,serialNumber,instrumentType,accuracyClass,unit,technology,indicationType,tareDevice,max,min,e,d} = registerInstrumentSchema.parse(cleanBody);
+    const {manufacturer,modelNumber,serialNumber,instrumentType,accuracyClass,unit,technology,indicationType,tareDevice,tareType,maximumTare,hasPrintingDevice,max,min,e,d} = registerInstrumentSchema.parse(cleanBody);
 
     // 1. Check for Duplicate Serial Number
     const existing = await Instrument.findOne({ serialNumber }).lean();
@@ -141,6 +161,9 @@ export const registerInstrument = async (req, res) => {
       technology,
       indicationType,
       tareDevice,
+      tareType,
+      maximumTare: mongoose.Types.Decimal128.fromString(maximumTare),
+      hasPrintingDevice,
       max: mongoose.Types.Decimal128.fromString(max),
       min: mongoose.Types.Decimal128.fromString(min),
       e: mongoose.Types.Decimal128.fromString(e),
@@ -178,6 +201,14 @@ export const registerInstrument = async (req, res) => {
       await saved.save();
     }
 
+    await recordAudit(req, {
+      action: "Instrument Registered",
+      details: `Registered instrument ${manufacturer} ${modelNumber} with serial number ${serialNumber}.`,
+      relatedTo: applicationNumber,
+      relatedModel: "Instrument",
+      metadata: { applicationNumber, serialNumber },
+    });
+
     return res.status(201).json({
       success: true,
       message:
@@ -197,13 +228,52 @@ export const registerInstrument = async (req, res) => {
 
 export const getMyEvaluations = async (req, res) => {
   try {
-    const evaluations = await Evaluation.find({ testingOfficerId: req.user._id })
+    let testingOfficerId = req.user._id;
+    if (req.user.role === "LAB SUPERVISOR" && req.query.officerId) {
+      if (!mongoose.isValidObjectId(req.query.officerId)) return res.status(400).json({ success: false, message: "A valid officer ID is required." });
+      const officer = await User.findOne({ _id: req.query.officerId, role: "TESTING OFFICER", supervisorId: req.user._id }).select("_id").lean();
+      if (!officer) return res.status(404).json({ success: false, message: "Testing officer not found under this supervisor." });
+      testingOfficerId = officer._id;
+    }
+    const evaluations = await Evaluation.find({ testingOfficerId })
       .populate("instrumentId", "manufacturer modelNumber serialNumber instrumentType createdAt")
       .sort({ createdAt: -1 })
       .lean();
     return res.json({ success: true, data: evaluations });
   } catch (error) {
     return res.status(500).json({ success: false, error: "Failed to fetch evaluations." });
+  }
+};
+
+export const getSupervisorEvaluations = async (req, res) => {
+  try {
+    if (req.user.role !== "LAB SUPERVISOR") {
+      return res.status(403).json({ success: false, message: "Only lab supervisors can view these evaluations." });
+    }
+
+    const officers = await User.find({
+      role: "TESTING OFFICER",
+      supervisorId: req.user._id,
+    }).select("_id name").lean();
+    const officerIds = officers.map((officer) => officer._id);
+    const officerNames = new Map(officers.map((officer) => [String(officer._id), officer.name]));
+
+    const evaluations = await Evaluation.find({
+      testingOfficerId: { $in: officerIds },
+      status: "SUPERVISOR_REVIEW",
+    })
+      .populate("instrumentId", "manufacturer modelNumber serialNumber instrumentType")
+      .sort({ updatedAt: -1 })
+      .lean();
+
+    const data = evaluations.map((evaluation) => ({
+      ...evaluation,
+      testingOfficerName: officerNames.get(String(evaluation.testingOfficerId)) || "—",
+    }));
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error("Get supervisor evaluations error:", error);
+    return res.status(500).json({ success: false, message: "Failed to fetch supervisor evaluations." });
   }
 };
 
@@ -255,35 +325,68 @@ export const generateTestPlanController = async (req, res) => {
 
     const existingPlan = await TestPlan.findOne({ evaluationId: evaluation._id });
     if (existingPlan) {
+      await Inspection.findOneAndUpdate(
+        { instrumentId: instrument._id },
+        { $setOnInsert: { instrumentId: instrument._id, evaluationId: evaluation._id } },
+        { upsert: true, new: true, setDefaultsOnInsert: true },
+      );
+      if (!existingPlan.tests?.length) {
+        existingPlan.tests = tests;
+        existingPlan.status = "GENERATED";
+        await existingPlan.save();
+      }
+      await Evaluation.findByIdAndUpdate(evaluation._id, {
+        $set: {
+          testPlanId: existingPlan._id,
+          testPlanStatus: "COMPLETED",
+          testingStatus: "PENDING",
+          status: "TESTING",
+          progress: 45,
+        },
+      });
       return res.status(200).json({
         success: true,
         message: "Test plan already generated",
-        data: { ...existingPlan.toObject(), instrument },
+        data: { ...existingPlan.toObject(), instrument: instrument.toJSON() },
       });
     }
 
     // 4. Create TestPlan
-    const testPlan = await TestPlan.create({
-      evaluationId: evaluation._id,
-      instrumentId: instrument._id,
-      standard: "OIML R 76-1",
-      standardVersion: "2006",
-      tests,
-      status: "GENERATED",
-    });
+    let testPlan;
+    try {
+      testPlan = await TestPlan.create({
+        evaluationId: evaluation._id,
+        instrumentId: instrument._id,
+        standard: "OIML R 76-1",
+        standardVersion: "2006",
+        tests,
+        status: "GENERATED",
+      });
+    } catch (createError) {
+      if (createError?.code !== 11000) throw createError;
+      testPlan = await TestPlan.findOne({ evaluationId: evaluation._id });
+      if (!testPlan) throw createError;
+    }
+
+    await Inspection.findOneAndUpdate(
+      { instrumentId: instrument._id },
+      { $setOnInsert: { instrumentId: instrument._id, evaluationId: evaluation._id } },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
 
     // 5. Update evaluation
     evaluation.testPlanId = testPlan._id;
     evaluation.testPlanStatus = "COMPLETED";
     evaluation.testingStatus = "PENDING";
     evaluation.status = "TESTING";
+    evaluation.progress = 45;
 
     await evaluation.save();
 
     return res.status(201).json({
       success: true,
       message: "Test plan generated successfully",
-      data: { ...testPlan.toObject(), instrument },
+      data: { ...testPlan.toObject(), instrument: instrument.toJSON() },
     });
 
   } catch (error) {
@@ -291,9 +394,110 @@ export const generateTestPlanController = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: "Failed to generate test plan",
+      message: error.message || "Failed to generate test plan",
     });
   }
+};
+
+export const getTestExecutionData = async (req, res) => {
+  try {
+    const evaluation = await Evaluation.findOne({ applicationNumber: req.params.applicationId })
+      .populate("instrumentId")
+      .populate("testPlanId");
+    if (!evaluation) return res.status(404).json({ success: false, message: "Evaluation not found." });
+    if (!evaluation.testPlanId) return res.status(404).json({ success: false, message: "Test plan has not been generated." });
+    const inspection = await Inspection.findOne({ evaluationId: evaluation._id })
+      || await Inspection.findOne({ instrumentId: evaluation.instrumentId?._id || evaluation.instrumentId });
+    return res.json({ success: true, data: { evaluation, instrument: evaluation.instrumentId, testPlan: evaluation.testPlanId, inspection } });
+  } catch (error) {
+    return res.status(400).json({ success: false, message: error.message || "Failed to load test execution data." });
+  }
+};
+
+export const reviewSupervisorEvaluation = async (req, res) => {
+  try {
+    if (req.user.role !== "LAB SUPERVISOR") return res.status(403).json({ success: false, message: "Only lab supervisors can review evaluations." });
+    const { decision, remarks = "" } = req.body;
+    if (!["ACCEPT", "REJECT"].includes(decision)) return res.status(400).json({ success: false, message: "Invalid review decision." });
+    const evaluation = await Evaluation.findOne({ applicationNumber: req.params.applicationId, status: "SUPERVISOR_REVIEW" });
+    const assignedOfficer = evaluation ? await User.exists({ _id: evaluation.testingOfficerId, role: "TESTING OFFICER", supervisorId: req.user._id }) : null;
+    if (!evaluation || !assignedOfficer) return res.status(404).json({ success: false, message: "Evaluation is not available for review." });
+    evaluation.reviewStatus = decision === "ACCEPT" ? "APPROVED" : "CORRECTION_REQUIRED";
+    evaluation.status = decision === "ACCEPT" ? "REPORT_GENERATION" : "CORRECTION_REQUIRED";
+    evaluation.supervisorRemarks = remarks;
+    evaluation.reviewedAt = new Date();
+    if (decision === "ACCEPT") {
+      const [inspectionByEvaluation, instrument] = await Promise.all([
+        Inspection.findOne({ evaluationId: evaluation._id }),
+        Instrument.findById(evaluation.instrumentId),
+      ]);
+      const inspection = inspectionByEvaluation || await Inspection.findOne({ instrumentId: evaluation.instrumentId });
+      if (inspection) inspection.inspectionStatus = "APPROVED";
+      if (instrument) instrument.status = "APPROVED";
+      const approvedAt = new Date();
+      const report = await Report.findOneAndUpdate(
+        { evaluationId: evaluation._id },
+        {
+          $setOnInsert: {
+            evaluationId: evaluation._id,
+            inspectionId: inspection?._id,
+            instrumentId: instrument?._id || evaluation.instrumentId,
+            reportStatus: "GENERATED",
+            instrumentDetails: instrument?.toObject?.() || instrument,
+            testPlan: evaluation.testPlanId ? (await TestPlan.findById(evaluation.testPlanId))?.toObject?.() : null,
+            testResults: inspection?.toObject?.() || inspection,
+            supervisorId: req.user._id,
+            approvedAt,
+          },
+        },
+        { new: true, upsert: true, setDefaultsOnInsert: true },
+      );
+      evaluation.reportId = report._id;
+      evaluation.reportStatus = "GENERATED";
+      await Promise.all([
+        evaluation.save(),
+        inspection?.save(),
+        instrument?.save(),
+        Notification.create({
+          recipientId: evaluation.testingOfficerId,
+          recipientRole: "TESTING_OFFICER",
+          message: `Application ${evaluation.applicationNumber} for ${instrument?.manufacturer || "the instrument"} ${instrument?.modelNumber || ""} has been approved by the supervisor. Your testing is complete; the approved test report is now being prepared.`,
+        }),
+      ]);
+      await recordAudit(req, {
+        action: "Report Generated",
+        details: `Generated report for application ${evaluation.applicationNumber}.`,
+        relatedTo: String(report._id),
+        relatedModel: "Report",
+        metadata: { applicationNumber: evaluation.applicationNumber },
+      });
+    } else {
+      await evaluation.save();
+    }
+    return res.json({ success: true, data: evaluation });
+  } catch (error) { return res.status(400).json({ success: false, message: error.message }); }
+};
+
+export const getGeneratedReport = async (req, res) => {
+  try {
+    if (req.user.role !== "LAB SUPERVISOR") return res.status(403).json({ success: false, message: "Only lab supervisors can view reports." });
+    const evaluation = await Evaluation.findOne({ applicationNumber: req.params.applicationId }).populate("instrumentId");
+    if (!evaluation) return res.status(404).json({ success: false, message: "Evaluation not found." });
+    const assignedOfficer = await User.exists({ _id: evaluation.testingOfficerId, role: "TESTING OFFICER", supervisorId: req.user._id });
+    if (!assignedOfficer || !evaluation.reportId) return res.status(404).json({ success: false, message: "Generated report not found." });
+    const report = await Report.findById(evaluation.reportId).lean();
+    return res.json({ success: true, data: report });
+  } catch (error) {
+    return res.status(400).json({ success: false, message: error.message || "Failed to load report." });
+  }
+};
+
+export const getGeneratedReports = async (req, res) => {
+  try {
+    if (req.user.role !== "LAB SUPERVISOR") return res.status(403).json({ success: false, message: "Only lab supervisors can view reports." });
+    const reports = await Report.find({ supervisorId: req.user._id }).populate("evaluationId", "applicationNumber").populate("instrumentId", "manufacturer modelNumber serialNumber").sort({ createdAt: -1 }).lean();
+    return res.json({ success: true, data: reports });
+  } catch (error) { return res.status(400).json({ success: false, message: error.message || "Failed to load reports." }); }
 };
 
 export const uploadEvaluationDocument = async (req, res) => {
@@ -435,12 +639,176 @@ export const getInstrumentForTesting = async (req, res) => {
       return res
         .status(404)
         .json({ success: false, error: "Instrument not found." });
-    return res.json({ success: true, data: instrument });
+    const inspection = await Inspection.findOne({ instrumentId: instrument._id }).select('generalExamination.photos').lean();
+    return res.json({
+      success: true,
+      data: {
+        ...instrument.toJSON(),
+        generalExaminationPhotos: inspection?.generalExamination?.photos || {},
+      },
+    });
   } catch (error) {
     return res
       .status(400)
       .json({ success: false, error: "Invalid instrument id." });
   }
+};
+
+export const getWeighingTestConfig = async (req, res) => {
+  try {
+    const instrument = await Instrument.findById(req.params.id);
+    if (!instrument) return res.status(404).json({ success: false, message: "Instrument not found." });
+    const inspection = await Inspection.findOne({ instrumentId: instrument._id });
+    if (!inspection) return res.status(404).json({ success: false, message: "Inspection record not found." });
+    if (!inspection.weighingTest?.testLoads?.length || inspection.weighingTest.testLoads.length < 5) {
+      const max = new Decimal(instrument.max.toString());
+      const min = new Decimal(instrument.min.toString());
+      const e = new Decimal(instrument.e.toString());
+      const roundToScale = (value) => value.div(e).round().times(e);
+      const generatedLoads = [
+        [min, "Minimum load"],
+        [max.div(4), "One-quarter maximum load"],
+        [max.div(2), "Half maximum load"],
+        [max.times(3).div(4), "Three-quarter maximum load"],
+        [max, "Maximum load"],
+      ].map(([load, description], step) => ({
+        step,
+        description,
+        load: mongoose.Types.Decimal128.fromString(roundToScale(load).toFixed(4)),
+        mpe: mongoose.Types.Decimal128.fromString(e.toFixed(4)),
+      }));
+      inspection.weighingTest = { ...(inspection.weighingTest?.toObject?.() || {}), testLoads: generatedLoads };
+      await inspection.save();
+    }
+    const e = new Decimal(instrument.e.toString());
+    inspection.weighingTest.testLoads = inspection.weighingTest.testLoads.map((point) => {
+      const load = new Decimal(point.load.toString());
+      const mpe = getMpeForLoad(instrument.accuracyClass, load, e);
+      return { ...point.toObject(), mpe: mongoose.Types.Decimal128.fromString(mpe.toFixed(4)) };
+    });
+    await inspection.save();
+    const evaluation = await Evaluation.findOne({ instrumentId: instrument._id }).sort({ createdAt: -1 });
+    if (evaluation) {
+      evaluation.testingStatus = "IN_PROGRESS";
+      evaluation.status = "TESTING";
+      await evaluation.save();
+      if (evaluation.testPlanId) await TestPlan.findByIdAndUpdate(evaluation.testPlanId, { status: "IN_PROGRESS" });
+    }
+    instrument.status = "TEST_IN_PROGRESS";
+    await instrument.save();
+    return res.json({ success: true, data: { instrument: instrument.toJSON(), testPoints: inspection.weighingTest.testLoads.map((point) => ({ step: point.step, description: point.description, load: point.load.toString(), mpe: point.mpe.toString() })) } });
+  } catch (error) { return res.status(400).json({ success: false, message: error.message || "Failed to load weighing test configuration." }); }
+};
+
+export const uploadGeneralExaminationPhoto = async (req, res) => {
+  try {
+    const { id: instrumentId } = req.params;
+    const photoKey = req.body?.photoKey;
+    const allowedPhotoKeys = ['nameplate', 'level', 'seal', 'display'];
+    if (!mongoose.isValidObjectId(instrumentId) || !allowedPhotoKeys.includes(photoKey)) {
+      return res.status(400).json({ success: false, message: 'A valid instrument and photo type are required.' });
+    }
+    if (!req.file) return res.status(400).json({ success: false, message: 'An image file is required.' });
+    if (!(await Instrument.exists({ _id: instrumentId }))) {
+      return res.status(404).json({ success: false, message: 'Instrument not found.' });
+    }
+
+    const uploaded = await uploadBufferToCloudinary(req.file.buffer, {
+      folder: 'SIH/general-examination',
+      resource_type: 'image',
+    });
+    const inspection = await Inspection.findOneAndUpdate(
+      { instrumentId },
+      { $set: { instrumentId, [`generalExamination.photos.${photoKey}`]: uploaded.secure_url } },
+      { new: true, upsert: true, setDefaultsOnInsert: true },
+    );
+    return res.status(201).json({ success: true, photoKey, url: uploaded.secure_url, inspectionId: inspection._id });
+  } catch (error) {
+    console.error('General examination photo upload error:', error);
+    return res.status(400).json({ success: false, message: error.message || 'Failed to upload photo.' });
+  }
+};
+
+export const uploadWeighingEvidence = async (req, res) => {
+  try {
+    const { id: instrumentId } = req.params;
+    const testKey = req.body?.testType || "weighingTest";
+    if (!["weighingTest", "repeatabilityTest", "eccentricityTest", "tareTest"].includes(testKey)) {
+      return res.status(400).json({ success: false, message: "Invalid test type." });
+    }
+    if (!mongoose.isValidObjectId(instrumentId)) {
+      return res.status(400).json({ success: false, message: "A valid instrument ID is required." });
+    }
+    if (!req.file) return res.status(400).json({ success: false, message: "An image file is required." });
+    const latitude = req.body?.latitude === undefined || req.body.latitude === "" ? null : Number(req.body.latitude);
+    const longitude = req.body?.longitude === undefined || req.body.longitude === "" ? null : Number(req.body.longitude);
+    if ((latitude !== null && !Number.isFinite(latitude)) || (longitude !== null && !Number.isFinite(longitude))) {
+      return res.status(400).json({ success: false, message: "Invalid evidence location." });
+    }
+
+    const inspection = await Inspection.findOne({ instrumentId });
+    if (!inspection) return res.status(404).json({ success: false, message: "Inspection record not found." });
+    if ((inspection[testKey]?.evidence || []).length >= 3) {
+      return res.status(400).json({ success: false, message: "You can upload a maximum of 3 evidence images." });
+    }
+
+    const uploaded = await uploadBufferToCloudinary(req.file.buffer, {
+      folder: `SIH/${testKey}-evidence`,
+      resource_type: "image",
+    });
+    const address = await reverseGeocode(latitude, longitude);
+    const evidenceItem = { url: uploaded.secure_url, uploadedAt: new Date(), location: { latitude, longitude, address } };
+    const updatedInspection = await Inspection.findOneAndUpdate(
+      { _id: inspection._id },
+      { $push: { [`${testKey}.evidence`]: evidenceItem } },
+      { new: true, runValidators: false },
+    );
+    return res.status(201).json({ success: true, evidence: updatedInspection?.[testKey]?.evidence || [] });
+  } catch (error) {
+    console.error("Weighing evidence upload error:", error);
+    return res.status(400).json({ success: false, message: error.message || "Failed to upload evidence." });
+  }
+};
+
+export const submitGeneralExamination = async (req, res) => {
+  try {
+    const { instrumentId, checklist = [], photos = {}, passed } = req.body;
+    if (!mongoose.isValidObjectId(instrumentId)) return res.status(400).json({ success: false, message: "A valid instrument ID is required." });
+    if (passed !== true) return res.status(400).json({ success: false, message: "General Examination must pass before proceeding." });
+    const [instrument, evaluation] = await Promise.all([
+      Instrument.findById(instrumentId),
+      Evaluation.findOne({ instrumentId }).sort({ createdAt: -1 }),
+    ]);
+    const inspection = await Inspection.findOne({ instrumentId });
+    if (!evaluation || !inspection) return res.status(404).json({ success: false, message: "Evaluation or inspection record not found." });
+    inspection.evaluationId = evaluation._id;
+    inspection.generalExamination = { checklist, photos, passed: true, submittedAt: new Date(), submittedBy: req.user?._id || null };
+    await inspection.save();
+    let testPlan = await TestPlan.findOne({ evaluationId: evaluation._id });
+    if (!testPlan) {
+      testPlan = await TestPlan.create({
+        evaluationId: evaluation._id,
+        instrumentId: instrument._id,
+        standard: "OIML R 76-1",
+        standardVersion: "2006",
+        tests: generateTestPlan(instrument),
+        status: "IN_PROGRESS",
+      });
+      const generalTest = testPlan.tests.find((test) => test.code === "GENERAL_EXAMINATION");
+      if (generalTest) generalTest.status = "COMPLETED";
+      await testPlan.save();
+      evaluation.testPlanId = testPlan._id;
+    } else {
+      const generalTest = testPlan.tests.find((test) => test.code === "GENERAL_EXAMINATION");
+      if (generalTest) generalTest.status = "COMPLETED";
+      testPlan.status = "IN_PROGRESS";
+      await testPlan.save();
+    }
+    evaluation.testingStatus = "IN_PROGRESS";
+    evaluation.status = "TESTING";
+    await evaluation.save();
+    return res.json({ success: true, data: { inspection, testPlan, evaluation } });
+  } catch (error) { return res.status(400).json({ success: false, message: error.message || "Failed to save General Examination." }); }
 };
 
 export const submitInstrumentObservations = async (req, res) => {
@@ -462,14 +830,17 @@ export const submitInstrumentObservations = async (req, res) => {
     if (!instrument) {
       return res.status(404).json({ success: false, message: "Instrument not found" });
     }
+    const inspection = await Inspection.findOne({ instrumentId });
+    if (!inspection?.weighingTest?.testLoads?.length) return res.status(400).json({ success: false, message: "Weighing test loads have not been generated." });
 
     const e = new Decimal(instrument.e.toString());
     const halfE = e.times(0.5);
+    const storedLoads = inspection.weighingTest.testLoads.map((point) => point.toObject());
     const testPoints = [
-      ...instrument.testPoints.map((point) => point.toObject()),
-      ...instrument.testPoints.slice(0, 4).reverse().map((point, index) => ({
-        ...point.toObject(),
-        step: instrument.testPoints.length + index,
+      ...storedLoads,
+      ...storedLoads.slice(0, 4).reverse().map((point, index) => ({
+        ...point,
+        step: storedLoads.length + index,
         description: `Unload to ${point.description.replace(/\s*\([^)]*\)/, "")}`,
       })),
     ];
@@ -482,11 +853,10 @@ export const submitInstrumentObservations = async (req, res) => {
       });
     }
 
-    const step0 = readingsByStep.get(0);
-    const I0 = new Decimal(step0.indicated.toString());
-    const deltaL0 = new Decimal(step0.deltaL.toString());
-    const L0 = new Decimal(testPoints[0].load.toString());
-    const E0 = I0.plus(halfE).minus(deltaL0).minus(L0);
+    // The generated sequence starts at minimum load rather than a separate
+    // zero-load observation. Do not use the minimum-load row as E0, otherwise
+    // its corrected error is always forced to zero.
+    const E0 = new Decimal(0);
 
     let serverCalculatedAllPassed = true;
     const verifiedObservations = testPoints.map((point) => {
@@ -514,27 +884,38 @@ export const submitInstrumentObservations = async (req, res) => {
       };
     });
 
-    let inspection = await Inspection.findOne({ instrumentId });
-    if (!inspection) {
-      inspection = new Inspection({
-        instrumentId,
-        testedBy: {
-          officerId: req.user?.id || "OFFICER-001",
-          officerName: req.user?.name || "Field Inspector",
-          submittedAt: new Date(),
-        },
-      });
-    }
-
     inspection.weighingTest = {
       baselineE0: mongoose.Types.Decimal128.fromString(E0.toFixed(4)),
       readings: verifiedObservations,
+      evidence: inspection.weighingTest.evidence || [],
       passed: serverCalculatedAllPassed,
     };
 
-    // This is only one part of the inspection. Later tests will determine the final result.
+    // Mark only this test as completed. The overall testing workflow remains
+    // in progress until the remaining prescribed tests are completed.
+    const evaluation = await Evaluation.findOne({ instrumentId }).sort({ createdAt: -1 });
+    const testPlan = evaluation ? await TestPlan.findOne({ evaluationId: evaluation._id }) : null;
+    if (testPlan) {
+      const weighingTest = testPlan.tests.find((test) => test.code === "WEIGHING_PERFORMANCE");
+      if (weighingTest) weighingTest.status = "COMPLETED";
+      testPlan.status = testPlan.tests.length && testPlan.tests.every((test) => test.status === "COMPLETED")
+        ? "COMPLETED"
+        : "IN_PROGRESS";
+    }
+
+    if (evaluation) {
+      const allTestsCompleted = testPlan?.tests?.length > 0 && testPlan.tests.every((test) => test.status === "COMPLETED");
+      evaluation.testingStatus = allTestsCompleted ? "COMPLETED" : "IN_PROGRESS";
+      evaluation.status = allTestsCompleted ? "COMPLIANCE_EVALUATION" : "TESTING";
+    }
+
     instrument.status = "TEST_IN_PROGRESS";
-    await Promise.all([inspection.save(), instrument.save()]);
+    await Promise.all([
+      inspection.save(),
+      instrument.save(),
+      testPlan?.save(),
+      evaluation?.save(),
+    ]);
 
     return res.status(200).json({
       success: true,
@@ -562,15 +943,15 @@ export const submitEccentricityObservations = async (req, res) => {
     if (!instrument) return res.status(404).json({ success: false, message: "Instrument not found" });
     const e = new Decimal(instrument.e.toString());
     const halfE = e.div(2);
+    const mpeLimit = getMpeForLoad(instrument.accuracyClass, payload.testLoad, e);
     const byStep = new Map(payload.positions.map((position) => [position.step, position]));
     if ([1, 2, 3, 4, 5].some((step) => !byStep.has(step))) return res.status(400).json({ success: false, message: "Positions 1 through 5 are required." });
     const pValues = payload.positions.map((position) => new Decimal(position.indicated).plus(halfE).minus(position.deltaL));
-    const centerP = pValues[0];
-    const mpe = e;
+    const mpe = mpeLimit;
     const positions = payload.positions.map((position, index) => {
       const load = new Decimal(payload.testLoad);
       const trueP = pValues[index];
-      const error = trueP.minus(centerP);
+      const error = trueP.minus(load);
       return {
         stepIndex: position.step,
         label: ['Center', 'Front-Left', 'Rear-Left', 'Rear-Right', 'Front-Right'][position.step - 1],
@@ -584,12 +965,29 @@ export const submitEccentricityObservations = async (req, res) => {
       };
     });
     const passed = positions.every((position) => position.passed);
+    const existingInspection = await Inspection.findOne({ instrumentId });
     const inspection = await Inspection.findOneAndUpdate(
       { instrumentId },
-      { $set: { instrumentId, eccentricityTest: { testLoad: mongoose.Types.Decimal128.fromString(new Decimal(payload.testLoad).toFixed(4)), positions, passed } } },
+      { $set: { instrumentId, eccentricityTest: { testLoad: mongoose.Types.Decimal128.fromString(new Decimal(payload.testLoad).toFixed(4)), positions, evidence: existingInspection?.eccentricityTest?.evidence || [], passed } } },
       { new: true, upsert: true, setDefaultsOnInsert: true }
     );
-    return res.status(200).json({ success: true, passed, inspectionId: inspection._id, positions });
+    const evaluation = await Evaluation.findOne({ instrumentId }).sort({ createdAt: -1 });
+    const testPlan = evaluation ? await TestPlan.findOne({ evaluationId: evaluation._id }) : null;
+    if (testPlan) {
+      const eccentricityTest = testPlan.tests.find((test) => test.code === "ECCENTRICITY");
+      if (eccentricityTest) eccentricityTest.status = "COMPLETED";
+      testPlan.status = testPlan.tests.length && testPlan.tests.every((test) => test.status === "COMPLETED")
+        ? "COMPLETED"
+        : "IN_PROGRESS";
+    }
+    if (evaluation) {
+      const allTestsCompleted = Boolean(testPlan?.tests?.length && testPlan.tests.every((test) => test.status === "COMPLETED"));
+      evaluation.testingStatus = allTestsCompleted ? "COMPLETED" : "IN_PROGRESS";
+      evaluation.status = allTestsCompleted ? "COMPLIANCE_EVALUATION" : "TESTING";
+    }
+    instrument.status = "TEST_IN_PROGRESS";
+    await Promise.all([inspection.save(), instrument.save(), testPlan?.save(), evaluation?.save()]);
+    return res.status(200).json({ success: true, passed, inspectionId: inspection._id, instrumentStatus: instrument.status, positions });
   } catch (error) {
     console.error("Eccentricity submission error:", error);
     return res.status(400).json({ success: false, error: error.message });
@@ -601,41 +999,194 @@ export const submitRepeatabilityObservations = async (req, res) => {
     const instrumentId = req.params.id;
     if (!mongoose.isValidObjectId(instrumentId)) return res.status(400).json({ success: false, message: "A valid instrument ID is required." });
     const runs = req.body?.runs;
-    const testLoad = req.body?.testLoad;
-    if (!Array.isArray(runs) || runs.length !== 3 || testLoad === undefined) {
-      return res.status(400).json({ success: false, message: "Three repeatability runs and a test load are required." });
-    }
     const instrument = await Instrument.findById(instrumentId);
     if (!instrument) return res.status(404).json({ success: false, message: "Instrument not found" });
+    const accuracyClass = String(instrument.accuracyClass || "").trim().toUpperCase();
+    const requiredRuns = ["I", "II"].includes(accuracyClass) ? 6 : 3;
+    if (!Array.isArray(runs) || runs.length !== requiredRuns) {
+      return res.status(400).json({ success: false, message: `Class ${accuracyClass} verification requires ${requiredRuns} repeatability readings.` });
+    }
     const e = new Decimal(instrument.e.toString());
-    const halfE = e.div(2);
-    const pValues = runs.map((run) => new Decimal(run.indicated).plus(halfE).minus(run.deltaL));
-    const pMax = Decimal.max(...pValues);
-    const pMin = Decimal.min(...pValues);
-    const variationRange = pMax.minus(pMin);
-    const positions = runs.map((run, index) => {
-      const trueP = pValues[index];
-      return {
-        stepIndex: index + 1,
-        label: `Run ${index + 1}`,
-        load: mongoose.Types.Decimal128.fromString(new Decimal(testLoad).toFixed(4)),
-        indicated: mongoose.Types.Decimal128.fromString(new Decimal(run.indicated).toFixed(4)),
-        deltaL: mongoose.Types.Decimal128.fromString(new Decimal(run.deltaL).toFixed(4)),
-        trueP: mongoose.Types.Decimal128.fromString(trueP.toFixed(4)),
-        correctedErrorEc: mongoose.Types.Decimal128.fromString(trueP.minus(pValues[0]).toFixed(4)),
-        mpeLimit: mongoose.Types.Decimal128.fromString(e.toFixed(4)),
-        passed: variationRange.lte(e),
-      };
-    });
-    const passed = variationRange.lte(e);
+    const testLoad = new Decimal(instrument.max.toString()).times(0.8).div(e).round().times(e);
+    const verificationType = instrument.verificationType === "IN_SERVICE" ? "IN_SERVICE" : "INITIAL_VERIFICATION";
+    const mpeLimit = getMpeForLoad(instrument.accuracyClass, testLoad, e).times(verificationType === "IN_SERVICE" ? 2 : 1);
+    const indications = runs.map((run) => new Decimal(run.indication));
+    const maxIndication = Decimal.max(...indications);
+    const minIndication = Decimal.min(...indications);
+    const variation = maxIndication.minus(minIndication);
+    const passed = variation.lte(mpeLimit);
+    const storedRuns = runs.map((run, index) => ({
+      runNumber: index + 1,
+      loadApplied: mongoose.Types.Decimal128.fromString(testLoad.toFixed(4)),
+      indication: mongoose.Types.Decimal128.fromString(indications[index].toFixed(4)),
+    }));
+    const existingInspection = await Inspection.findOne({ instrumentId });
     const inspection = await Inspection.findOneAndUpdate(
       { instrumentId },
-      { $set: { instrumentId, repeatabilityTest: { testLoad: mongoose.Types.Decimal128.fromString(new Decimal(testLoad).toFixed(4)), runs: positions, pMax: mongoose.Types.Decimal128.fromString(pMax.toFixed(4)), pMin: mongoose.Types.Decimal128.fromString(pMin.toFixed(4)), variationRange: mongoose.Types.Decimal128.fromString(variationRange.toFixed(4)), mpeLimit: mongoose.Types.Decimal128.fromString(e.toFixed(4)), passed } } },
+      { $set: { instrumentId, repeatabilityTest: { testType: "REPEATABILITY", verificationType, testLoad: mongoose.Types.Decimal128.fromString(testLoad.toFixed(4)), loadPercentageOfMax: 80, numberOfRuns: requiredRuns, runs: storedRuns, maxIndication: mongoose.Types.Decimal128.fromString(maxIndication.toFixed(4)), minIndication: mongoose.Types.Decimal128.fromString(minIndication.toFixed(4)), variation: mongoose.Types.Decimal128.fromString(variation.toFixed(4)), variationRange: mongoose.Types.Decimal128.fromString(variation.toFixed(4)), mpeLimit: mongoose.Types.Decimal128.fromString(mpeLimit.toFixed(4)), evidence: existingInspection?.repeatabilityTest?.evidence || [], passed } } },
       { new: true, upsert: true, setDefaultsOnInsert: true },
     );
-    return res.json({ success: true, passed, inspectionId: inspection._id });
+    const evaluation = await Evaluation.findOne({ instrumentId }).sort({ createdAt: -1 });
+    const testPlan = evaluation ? await TestPlan.findOne({ evaluationId: evaluation._id }) : null;
+    if (testPlan) {
+      const repeatabilityTest = testPlan.tests.find((test) => test.code === "REPEATABILITY");
+      if (repeatabilityTest) repeatabilityTest.status = "COMPLETED";
+      testPlan.status = testPlan.tests.length && testPlan.tests.every((test) => test.status === "COMPLETED") ? "COMPLETED" : "IN_PROGRESS";
+    }
+    if (evaluation) {
+      const allTestsCompleted = Boolean(testPlan?.tests?.length && testPlan.tests.every((test) => test.status === "COMPLETED"));
+      evaluation.testingStatus = allTestsCompleted ? "COMPLETED" : "IN_PROGRESS";
+      evaluation.status = allTestsCompleted ? "COMPLIANCE_EVALUATION" : "TESTING";
+    }
+    await Promise.all([testPlan?.save(), evaluation?.save()]);
+    return res.json({ success: true, data: { maxIndication: maxIndication.toFixed(4), minIndication: minIndication.toFixed(4), variation: variation.toFixed(4), mpe: mpeLimit.toFixed(4), overallStatus: passed ? "PASS" : "FAIL" }, inspectionId: inspection._id });
   } catch (error) {
     console.error("Repeatability submission error:", error);
+    return res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+export const submitTareTest = async (req, res) => {
+  try {
+    const instrument = await Instrument.findById(req.params.id);
+    if (!instrument) return res.status(404).json({ success: false, message: "Instrument not found." });
+    const readings = req.body?.readings;
+    if (!Array.isArray(readings) || readings.length !== 5) return res.status(400).json({ success: false, message: "Five tare readings are required." });
+    const e = new Decimal(instrument.e.toString());
+    const max = new Decimal(instrument.max.toString());
+    const min = new Decimal(instrument.min.toString());
+    const tare = new Decimal(instrument.maximumTare?.toString() || 0);
+    const tareValue = instrument.tareType === "Additive" ? tare.div(3) : tare.div(2);
+    const loads = [min, max.times(.25), max.times(.5), max.times(.75), max];
+    const points = readings.map((reading, index) => {
+      const indication = new Decimal(reading.indication);
+      const load = loads[index];
+      const error = indication.minus(load);
+      const passed = error.abs().lte(e);
+      return { step: index + 1, tareValue: mongoose.Types.Decimal128.fromString(tareValue.toFixed(4)), netLoad: mongoose.Types.Decimal128.fromString(load.toFixed(4)), mpeLimit: mongoose.Types.Decimal128.fromString(e.toFixed(4)), indicated: mongoose.Types.Decimal128.fromString(indication.toFixed(4)), correctedError: mongoose.Types.Decimal128.fromString(error.toFixed(4)), passed };
+    });
+    const passed = points.every((point) => point.passed);
+    const existingInspection = await Inspection.findOne({ instrumentId: instrument._id });
+    const inspection = await Inspection.findOneAndUpdate({ instrumentId: instrument._id }, { $set: { tareTest: { tareType: instrument.tareType, tareValues: [mongoose.Types.Decimal128.fromString(tareValue.toFixed(4))], points, evidence: existingInspection?.tareTest?.evidence || [], passed } } }, { new: true, upsert: true, setDefaultsOnInsert: true });
+    const evaluation = await Evaluation.findOne({ instrumentId: instrument._id }).sort({ createdAt: -1 });
+    const testPlan = evaluation ? await TestPlan.findOne({ evaluationId: evaluation._id }) : null;
+    if (testPlan) { const test = testPlan.tests.find((item) => item.code === "TARE"); if (test) test.status = "COMPLETED"; testPlan.status = testPlan.tests.every((item) => item.status === "COMPLETED") ? "COMPLETED" : "IN_PROGRESS"; }
+    if (evaluation) { const complete = Boolean(testPlan?.tests?.length && testPlan.tests.every((item) => item.status === "COMPLETED")); evaluation.testingStatus = complete ? "COMPLETED" : "IN_PROGRESS"; evaluation.status = complete ? "COMPLIANCE_EVALUATION" : "TESTING"; }
+    await Promise.all([inspection.save(), testPlan?.save(), evaluation?.save()]);
+    return res.json({ success: true, passed, points });
+  } catch (error) { return res.status(400).json({ success: false, message: error.message }); }
+};
+
+export const completeUnimplementedTest = async (req, res) => {
+  try {
+    const instrument = await Instrument.findById(req.params.id);
+    const evaluation = instrument ? await Evaluation.findOne({ instrumentId: instrument._id }).sort({ createdAt: -1 }) : null;
+    const testPlan = evaluation ? await TestPlan.findOne({ evaluationId: evaluation._id }) : null;
+    if (!instrument || !evaluation || !testPlan) return res.status(404).json({ success: false, message: "Test plan not found." });
+    const test = testPlan.tests.find((item) => item.code === req.params.code);
+    if (!test) return res.status(404).json({ success: false, message: "Test not found in test plan." });
+    test.status = "COMPLETED";
+    const complete = testPlan.tests.length > 0 && testPlan.tests.every((item) => item.status === "COMPLETED");
+    testPlan.status = complete ? "COMPLETED" : "IN_PROGRESS";
+    evaluation.testingStatus = complete ? "COMPLETED" : "IN_PROGRESS";
+    evaluation.status = complete ? "COMPLIANCE_EVALUATION" : "TESTING";
+    await Promise.all([testPlan.save(), evaluation.save()]);
+    return res.json({ success: true, testPlan, testingStatus: evaluation.testingStatus });
+  } catch (error) { return res.status(400).json({ success: false, message: error.message }); }
+};
+
+export const getTareTestConfig = async (req, res) => {
+  try {
+    const instrument = await Instrument.findById(req.params.id);
+    if (!instrument) return res.status(404).json({ success: false, message: "Instrument not found." });
+    const max = new Decimal(instrument.max.toString());
+    const min = new Decimal(instrument.min.toString());
+    const e = new Decimal(instrument.e.toString());
+    const maximumTare = new Decimal(instrument.maximumTare?.toString() || 0);
+    const tareValues = instrument.tareType === "Additive" ? [maximumTare.div(3), maximumTare] : [maximumTare.div(2)];
+    const points = [min, max.times(.25), max.times(.5), max.times(.75), max].map((netLoad, index) => ({
+      step: index + 1, tareValue: tareValues[0].toFixed(4), netLoad: netLoad.toFixed(4), mpeLimit: e.toFixed(4),
+    }));
+    const inspection = await Inspection.findOneAndUpdate({ instrumentId: instrument._id }, { $set: { tareTest: { tareType: instrument.tareType, tareValues: tareValues.map((value) => mongoose.Types.Decimal128.fromString(value.toFixed(4))), points, passed: false } } }, { new: true, upsert: true, setDefaultsOnInsert: true });
+    const evaluation = await Evaluation.findOne({ instrumentId: instrument._id }).sort({ createdAt: -1 }).select("applicationNumber");
+    return res.json({ success: true, data: { instrument: instrument.toJSON(), applicationNumber: evaluation?.applicationNumber || null, tareType: instrument.tareType, maximumTare: maximumTare.toFixed(4), tareValues: tareValues.map((value) => value.toFixed(4)), points: inspection.tareTest.points } });
+  } catch (error) { return res.status(400).json({ success: false, message: error.message }); }
+};
+
+export const getEccentricityTestConfig = async (req, res) => {
+  try {
+    const instrumentId = req.params.id;
+    if (!mongoose.isValidObjectId(instrumentId)) return res.status(400).json({ success: false, message: "A valid instrument ID is required." });
+    const instrument = await Instrument.findById(instrumentId);
+    if (!instrument) return res.status(404).json({ success: false, message: "Instrument not found." });
+    const e = new Decimal(instrument.e.toString());
+    const load = new Decimal(instrument.max.toString()).div(3).div(e).round().times(e);
+    const labels = ["Center", "Front-Left", "Rear-Left", "Rear-Right", "Front-Right"];
+    const inspection = await Inspection.findOneAndUpdate({ instrumentId }, { $setOnInsert: { instrumentId } }, { new: true, upsert: true, setDefaultsOnInsert: true });
+    let points = inspection.eccentricityTest?.generatedPoints;
+    if (!points?.length) {
+      points = labels.map((label, index) => ({ step: index + 1, label, loadApplied: mongoose.Types.Decimal128.fromString(load.toFixed(4)), indication: null }));
+      inspection.eccentricityTest = { ...(inspection.eccentricityTest?.toObject?.() || {}), generatedLoad: mongoose.Types.Decimal128.fromString(load.toFixed(4)), generatedPoints: points };
+      await inspection.save();
+    }
+    return res.json({ success: true, data: { instrument: instrument.toJSON(), testLoad: load.toFixed(4), mpe: getMpeForLoad(instrument.accuracyClass, load, e).toFixed(4), points } });
+  } catch (error) {
+    return res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+export const getRepeatabilityTestConfig = async (req, res) => {
+  try {
+    const instrumentId = req.params.id;
+    if (!mongoose.isValidObjectId(instrumentId)) {
+      return res.status(400).json({ success: false, message: "A valid instrument ID is required." });
+    }
+
+    const instrument = await Instrument.findById(instrumentId);
+    if (!instrument) return res.status(404).json({ success: false, message: "Instrument not found." });
+
+    const e = new Decimal(instrument.e.toString());
+    const inspection = await Inspection.findOneAndUpdate(
+      { instrumentId },
+      { $setOnInsert: { instrumentId } },
+      { new: true, upsert: true, setDefaultsOnInsert: true },
+    );
+
+    const accuracyClass = String(instrument.accuracyClass || "").trim().toUpperCase();
+    const numberOfRuns = ["I", "II"].includes(accuracyClass) ? 6 : 3;
+    const verificationType = instrument.verificationType === "IN_SERVICE" ? "IN_SERVICE" : "INITIAL_VERIFICATION";
+    let testLoad = inspection.repeatabilityTest?.testLoad;
+    if (testLoad === undefined || testLoad === null) {
+      // Verification uses one series at approximately 80% of Max.
+      testLoad = new Decimal(instrument.max.toString()).times(0.8).div(e).round().times(e);
+      inspection.repeatabilityTest = {
+        testType: "REPEATABILITY", verificationType, loadPercentageOfMax: 80, numberOfRuns,
+        runs: Array.from({ length: numberOfRuns }, (_, index) => ({ runNumber: index + 1, loadApplied: mongoose.Types.Decimal128.fromString(testLoad.toFixed(4)), indication: null })),
+        testLoad: mongoose.Types.Decimal128.fromString(testLoad.toFixed(4)),
+      };
+      await inspection.save();
+    } else {
+      testLoad = new Decimal(testLoad.toString());
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        instrument: instrument.toJSON(),
+        testType: "REPEATABILITY",
+        testLoad: testLoad.toFixed(4),
+        loadPercentageOfMax: 80,
+        mpe: getMpeForLoad(instrument.accuracyClass, testLoad, e).times(verificationType === "IN_SERVICE" ? 2 : 1).toFixed(4),
+        numberOfRuns,
+        runs: inspection.repeatabilityTest?.runs || [],
+        variation: inspection.repeatabilityTest?.variation?.toString?.() || null,
+        maxIndication: inspection.repeatabilityTest?.maxIndication?.toString?.() || null,
+        minIndication: inspection.repeatabilityTest?.minIndication?.toString?.() || null,
+        overallStatus: inspection.repeatabilityTest?.passed === true ? "PASS" : inspection.repeatabilityTest?.variation ? "FAIL" : "PENDING",
+      },
+    });
+  } catch (error) {
+    console.error("Repeatability config error:", error);
     return res.status(400).json({ success: false, message: error.message });
   }
 };
@@ -650,11 +1201,9 @@ export const submitFullInspection = async (req, res) => {
     ]);
     if (!instrument) return res.status(404).json({ success: false, message: "Instrument not found" });
     if (!inspection) return res.status(400).json({ success: false, message: "Inspection record not found." });
-    const allTestsPassed = Boolean(
-      inspection.weighingTest?.passed &&
-      inspection.eccentricityTest?.passed &&
-      inspection.repeatabilityTest?.passed,
-    );
+    const evaluation = await Evaluation.findOne({ instrumentId }).sort({ createdAt: -1 });
+    const testPlan = evaluation ? await TestPlan.findOne({ evaluationId: evaluation._id }) : null;
+    const allTestsPassed = Boolean(testPlan?.tests?.length && testPlan.tests.every((test) => test.status === "COMPLETED"));
     if (!allTestsPassed) {
       return res.status(400).json({
         success: false,
@@ -665,7 +1214,25 @@ export const submitFullInspection = async (req, res) => {
     inspection.inspectionStatus = "PENDING_APPROVAL";
     inspection.testedBy.submittedAt = new Date();
     instrument.status = "PENDING_APPROVAL";
-    await Promise.all([inspection.save(), instrument.save()]);
+    if (evaluation) {
+      evaluation.testingStatus = "COMPLETED";
+      evaluation.complianceStatus = "COMPLIANT";
+      evaluation.complianceResult = "PASS";
+      evaluation.status = "SUPERVISOR_REVIEW";
+      evaluation.progress = 75;
+    }
+    const testingOfficer = evaluation ? await User.findById(evaluation.testingOfficerId).select("supervisorId") : null;
+    const supervisorId = testingOfficer?.supervisorId;
+    await Promise.all([
+      inspection.save(),
+      instrument.save(),
+      evaluation?.save(),
+      supervisorId && Notification.create({
+        recipientId: supervisorId,
+        recipientRole: "LAB_SUPERVISOR",
+        message: `Application ${evaluation.applicationNumber} for ${instrument.manufacturer || "the instrument"} ${instrument.modelNumber || ""} has been submitted for your supervisor review.`,
+      }),
+    ]);
     return res.status(200).json({ success: true, allTestsPassed: inspection.allTestsPassed, instrumentStatus: instrument.status, inspectionId: inspection._id });
   } catch (error) {
     console.error("Full inspection submission error:", error);

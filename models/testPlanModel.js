@@ -19,6 +19,7 @@ const testPlanSchema = new mongoose.Schema(
         sequence: Number,
         code: String,
         name: String,
+        description: String,
         category: String,
         clause: String,
         status: String,
