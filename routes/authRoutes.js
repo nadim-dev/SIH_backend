@@ -12,7 +12,7 @@ router.get("/users", checkAuth, allowRoles("NAWI_ADMIN", "ADMIN", "ADMINISTRATOR
 router.patch("/users/:userId/status", checkAuth, allowRoles("NAWI_ADMIN", "ADMIN", "ADMINISTRATOR"), updateAdminUserStatus);
 router.delete("/users/:userId", checkAuth, allowRoles("NAWI_ADMIN", "ADMIN", "ADMINISTRATOR"), deleteAdminUser);
 router.post("/testing-officers", checkAuth, allowRoles("LAB SUPERVISOR"), createTestingOfficer);
-router.get("/testing-officers", checkAuth, allowRoles("LAB SUPERVISOR"), getTestingOfficers);
+router.get("/testing-officers", checkAuth, allowRoles("LAB SUPERVISOR", "NAWI_ADMIN", "ADMIN", "ADMINISTRATOR"), getTestingOfficers);
 router.delete("/testing-officers/:userId", checkAuth, allowRoles("LAB SUPERVISOR"), deleteTestingOfficer);
 router.patch("/testing-officers/:userId/deactivate", checkAuth, allowRoles("LAB SUPERVISOR"), deactivateTestingOfficer);
 router.patch("/testing-officers/:userId/activate", checkAuth, allowRoles("LAB SUPERVISOR"), activateTestingOfficer);

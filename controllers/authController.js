@@ -61,11 +61,16 @@ export const deleteAdminUser = async (req, res) => {
 
 export const getTestingOfficers = async (req, res) => {
   try {
-    if (req.user.role !== "LAB SUPERVISOR") {
-      return res.status(403).json({ message: "Only lab supervisors can view testing officers." });
+    const adminRoles = ["NAWI ADMIN", "NAWI_ADMIN", "ADMIN", "ADMINISTRATOR"];
+    const isAdmin = adminRoles.includes(String(req.user.role || "").trim().toUpperCase());
+    if (req.user.role !== "LAB SUPERVISOR" && !isAdmin) {
+      return res.status(403).json({ message: "Only supervisors and administrators can view testing officers." });
     }
-    const users = await User.find({ role: "TESTING OFFICER", supervisorId: req.user._id })
-      .select("name email officerId status")
+    const query = { role: "TESTING OFFICER" };
+    if (isAdmin && req.query.labId) query.labId = req.query.labId;
+    if (!isAdmin) query.supervisorId = req.user._id;
+    const users = await User.find(query)
+      .select("name email officerId status labId")
       .sort({ name: 1 })
       .lean();
     const counts = await Evaluation.aggregate([

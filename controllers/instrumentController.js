@@ -19,6 +19,30 @@ import Notification from "../models/notificationModel.js";
 import Report from "../models/reportModel.js";
 import { generateTestPlan } from "../utils/generateTestPlan.js";
 import { recordAudit } from "../utils/auditLogger.js";
+import Laboratory from "../models/laboratoryModel.js";
+
+const canonicalize = (value) => {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value && typeof value === "object") {
+    return Object.keys(value).sort().reduce((result, key) => {
+      if (!["_id", "createdAt", "updatedAt", "reportHash", "qrCode"].includes(key)) result[key] = canonicalize(value[key]);
+      return result;
+    }, {});
+  }
+  return value;
+};
+
+const createReportHash = (report) => crypto.createHash("sha256").update(JSON.stringify(canonicalize({
+  evaluationId: report.evaluationId,
+  inspectionId: report.inspectionId,
+  instrumentId: report.instrumentId,
+  reportStatus: report.reportStatus,
+  instrumentDetails: report.instrumentDetails,
+  testPlan: report.testPlan,
+  testResults: report.testResults,
+  supervisorId: report.supervisorId,
+  approvedAt: report.approvedAt,
+}))).digest("hex");
 
 const OIML_MPE_INTERVALS = {
   I: [50000, 200000],
@@ -229,9 +253,13 @@ export const registerInstrument = async (req, res) => {
 export const getMyEvaluations = async (req, res) => {
   try {
     let testingOfficerId = req.user._id;
-    if (req.user.role === "LAB SUPERVISOR" && req.query.officerId) {
+    const adminRoles = ["NAWI ADMIN", "NAWI_ADMIN", "ADMIN", "ADMINISTRATOR"];
+    const isAdmin = adminRoles.includes(String(req.user.role || "").trim().toUpperCase());
+    if ((req.user.role === "LAB SUPERVISOR" || isAdmin) && req.query.officerId) {
       if (!mongoose.isValidObjectId(req.query.officerId)) return res.status(400).json({ success: false, message: "A valid officer ID is required." });
-      const officer = await User.findOne({ _id: req.query.officerId, role: "TESTING OFFICER", supervisorId: req.user._id }).select("_id").lean();
+      const officerQuery = { _id: req.query.officerId, role: "TESTING OFFICER" };
+      if (!isAdmin) officerQuery.supervisorId = req.user._id;
+      const officer = await User.findOne(officerQuery).select("_id").lean();
       if (!officer) return res.status(404).json({ success: false, message: "Testing officer not found under this supervisor." });
       testingOfficerId = officer._id;
     }
@@ -247,14 +275,15 @@ export const getMyEvaluations = async (req, res) => {
 
 export const getSupervisorEvaluations = async (req, res) => {
   try {
-    if (req.user.role !== "LAB SUPERVISOR") {
-      return res.status(403).json({ success: false, message: "Only lab supervisors can view these evaluations." });
+    const adminRoles = ["NAWI ADMIN", "NAWI_ADMIN", "ADMIN", "ADMINISTRATOR"];
+    const isAdmin = adminRoles.includes(String(req.user.role || "").trim().toUpperCase());
+    if (req.user.role !== "LAB SUPERVISOR" && !isAdmin) {
+      return res.status(403).json({ success: false, message: "Only supervisors and administrators can view these evaluations." });
     }
-
-    const officers = await User.find({
-      role: "TESTING OFFICER",
-      supervisorId: req.user._id,
-    }).select("_id name").lean();
+    const officerQuery = { role: "TESTING OFFICER" };
+    if (isAdmin && req.query.labId) officerQuery.labId = req.query.labId;
+    if (!isAdmin) officerQuery.supervisorId = req.user._id;
+    const officers = await User.find(officerQuery).select("_id name").lean();
     const officerIds = officers.map((officer) => officer._id);
     const officerNames = new Map(officers.map((officer) => [String(officer._id), officer.name]));
 
@@ -423,13 +452,25 @@ export const reviewSupervisorEvaluation = async (req, res) => {
     const assignedOfficer = evaluation ? await User.exists({ _id: evaluation.testingOfficerId, role: "TESTING OFFICER", supervisorId: req.user._id }) : null;
     if (!evaluation || !assignedOfficer) return res.status(404).json({ success: false, message: "Evaluation is not available for review." });
     evaluation.reviewStatus = decision === "ACCEPT" ? "APPROVED" : "CORRECTION_REQUIRED";
-    evaluation.status = decision === "ACCEPT" ? "REPORT_GENERATION" : "CORRECTION_REQUIRED";
+    evaluation.status = decision === "ACCEPT" ? "COMPLETED" : "CORRECTION_REQUIRED";
     evaluation.supervisorRemarks = remarks;
     evaluation.reviewedAt = new Date();
     if (decision === "ACCEPT") {
-      const [inspectionByEvaluation, instrument] = await Promise.all([
+      evaluation.supervisorId = req.user._id;
+      evaluation.completedAt = evaluation.reviewedAt;
+      evaluation.documentsStatus = "COMPLETED";
+      evaluation.testPlanStatus = "COMPLETED";
+      evaluation.environmentStatus = "COMPLETED";
+      evaluation.testingStatus = "COMPLETED";
+      evaluation.complianceStatus = "COMPLIANT";
+      evaluation.complianceResult = "PASS";
+      evaluation.reviewStatus = "APPROVED";
+      evaluation.reportStatus = "GENERATED";
+      evaluation.progress = 100;
+      const [inspectionByEvaluation, instrument, laboratory] = await Promise.all([
         Inspection.findOne({ evaluationId: evaluation._id }),
         Instrument.findById(evaluation.instrumentId),
+        Laboratory.findById(req.user.labId).select("name"),
       ]);
       const inspection = inspectionByEvaluation || await Inspection.findOne({ instrumentId: evaluation.instrumentId });
       if (inspection) inspection.inspectionStatus = "APPROVED";
@@ -447,12 +488,20 @@ export const reviewSupervisorEvaluation = async (req, res) => {
             testPlan: evaluation.testPlanId ? (await TestPlan.findById(evaluation.testPlanId))?.toObject?.() : null,
             testResults: inspection?.toObject?.() || inspection,
             supervisorId: req.user._id,
+            laboratoryName: laboratory?.name || null,
             approvedAt,
           },
         },
         { new: true, upsert: true, setDefaultsOnInsert: true },
       );
+      const reportHash = createReportHash(report.toObject());
+      const frontendUrl = (process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/$/, "");
+      report.reportHash = reportHash;
+      report.qrCode = `${frontendUrl}/verify-report/${report._id}`;
+      await report.save();
       evaluation.reportId = report._id;
+      evaluation.reportHash = reportHash;
+      evaluation.qrCode = report.qrCode;
       evaluation.reportStatus = "GENERATED";
       await Promise.all([
         evaluation.save(),
@@ -461,7 +510,7 @@ export const reviewSupervisorEvaluation = async (req, res) => {
         Notification.create({
           recipientId: evaluation.testingOfficerId,
           recipientRole: "TESTING_OFFICER",
-          message: `Application ${evaluation.applicationNumber} for ${instrument?.manufacturer || "the instrument"} ${instrument?.modelNumber || ""} has been approved by the supervisor. Your testing is complete; the approved test report is now being prepared.`,
+          message: `Application ${evaluation.applicationNumber} for ${instrument?.manufacturer || "the instrument"} ${instrument?.modelNumber || ""} has been approved by the supervisor. The evaluation is now complete.`,
         }),
       ]);
       await recordAudit(req, {
@@ -480,24 +529,83 @@ export const reviewSupervisorEvaluation = async (req, res) => {
 
 export const getGeneratedReport = async (req, res) => {
   try {
-    if (req.user.role !== "LAB SUPERVISOR") return res.status(403).json({ success: false, message: "Only lab supervisors can view reports." });
     const evaluation = await Evaluation.findOne({ applicationNumber: req.params.applicationId }).populate("instrumentId");
     if (!evaluation) return res.status(404).json({ success: false, message: "Evaluation not found." });
-    const assignedOfficer = await User.exists({ _id: evaluation.testingOfficerId, role: "TESTING OFFICER", supervisorId: req.user._id });
-    if (!assignedOfficer || !evaluation.reportId) return res.status(404).json({ success: false, message: "Generated report not found." });
-    const report = await Report.findById(evaluation.reportId).lean();
+    const isAssignedTestingOfficer = req.user.role === "TESTING OFFICER"
+      && String(evaluation.testingOfficerId) === String(req.user._id);
+    const isSupervisor = req.user.role === "LAB SUPERVISOR";
+    const adminRoles = ["NAWI ADMIN", "NAWI_ADMIN", "ADMIN", "ADMINISTRATOR"];
+    const isAdmin = adminRoles.includes(String(req.user.role || "").trim().toUpperCase());
+    if (!isAssignedTestingOfficer && !isSupervisor && !isAdmin) {
+      return res.status(403).json({ success: false, message: "You are not authorized to view this report." });
+    }
+    const assignedOfficer = isSupervisor
+      ? await User.exists({ _id: evaluation.testingOfficerId, role: "TESTING OFFICER", supervisorId: req.user._id })
+      : isAdmin;
+    if (!evaluation.reportId) return res.status(404).json({ success: false, message: "Generated report not found." });
+    const report = await Report.findById(evaluation.reportId)
+      .populate({ path: "evaluationId", select: "applicationNumber testingOfficerId", populate: { path: "testingOfficerId", select: "name role" } })
+      .populate("supervisorId", "name role")
+      .lean();
+    const reportSupervisorId = report?.supervisorId?._id || report?.supervisorId;
+    const isReportOwner = report && String(reportSupervisorId) === String(req.user._id);
+    if (!report || (!assignedOfficer && !isReportOwner && !isAssignedTestingOfficer)) return res.status(404).json({ success: false, message: "Generated report not found." });
     return res.json({ success: true, data: report });
   } catch (error) {
     return res.status(400).json({ success: false, message: error.message || "Failed to load report." });
   }
 };
 
+export const verifyReport = async (req, res) => {
+  try {
+    const report = await Report.findById(req.params.reportId).populate("instrumentId", "manufacturer modelNumber serialNumber");
+    if (!report) return res.status(404).json({ success: false, message: "Report not found." });
+    const currentHash = createReportHash(report.toObject());
+    return res.json({
+      success: true,
+      valid: Boolean(report.reportHash) && currentHash === report.reportHash,
+      report: {
+        reportId: report._id,
+        reportHash: report.reportHash,
+        reportStatus: report.reportStatus,
+        approvedAt: report.approvedAt,
+        instrument: report.instrumentId,
+        complianceStatus: report.testResults?.complianceStatus || report.testResults?.complianceResult,
+      },
+    });
+  } catch (error) {
+    return res.status(400).json({ success: false, message: "Unable to verify report." });
+  }
+};
+
 export const getGeneratedReports = async (req, res) => {
   try {
     if (req.user.role !== "LAB SUPERVISOR") return res.status(403).json({ success: false, message: "Only lab supervisors can view reports." });
-    const reports = await Report.find({ supervisorId: req.user._id }).populate("evaluationId", "applicationNumber").populate("instrumentId", "manufacturer modelNumber serialNumber").sort({ createdAt: -1 }).lean();
+    const reports = await Report.find({ supervisorId: req.user._id }).populate("evaluationId", "applicationNumber").populate("instrumentId", "instrumentType manufacturer modelNumber serialNumber accuracyClass").sort({ createdAt: -1 }).lean();
     return res.json({ success: true, data: reports });
   } catch (error) { return res.status(400).json({ success: false, message: error.message || "Failed to load reports." }); }
+};
+
+export const getAllGeneratedReportsAdmin = async (req, res) => {
+  try {
+    const adminRoles = ["NAWI ADMIN", "NAWI_ADMIN", "ADMIN", "ADMINISTRATOR"];
+    if (!adminRoles.includes(String(req.user.role || "").trim().toUpperCase())) {
+      return res.status(403).json({ success: false, message: "Only administrators can view all reports." });
+    }
+    const reports = await Report.find({ reportStatus: { $in: ["GENERATED", "FINALIZED"] } })
+      .populate("evaluationId", "applicationNumber")
+      .populate("instrumentId", "instrumentType manufacturer modelNumber serialNumber accuracyClass")
+      .populate({ path: "supervisorId", select: "labId", populate: { path: "labId", select: "name" } })
+      .sort({ createdAt: -1 })
+      .lean();
+    const reportsWithLaboratory = reports.map((report) => ({
+      ...report,
+      laboratoryName: report.supervisorId?.labId?.name || report.laboratoryName || null,
+    }));
+    return res.json({ success: true, data: reportsWithLaboratory });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message || "Failed to load all reports." });
+  }
 };
 
 export const uploadEvaluationDocument = async (req, res) => {

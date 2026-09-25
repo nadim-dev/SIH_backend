@@ -1,5 +1,5 @@
 import express from "express";
-import { registerInstrument, getMyEvaluations, getSupervisorEvaluations, getEvaluationDocuments, uploadEvaluationDocument, completeEvaluationDocuments, saveEvaluationEnvironment, generateTestPlanController, getTestExecutionData, reviewSupervisorEvaluation, getGeneratedReport, getGeneratedReports, getInstrumentForTesting, getWeighingTestConfig, getRepeatabilityTestConfig, getEccentricityTestConfig, getTareTestConfig, submitTareTest, completeUnimplementedTest, uploadGeneralExaminationPhoto, uploadWeighingEvidence, submitGeneralExamination, submitInstrumentObservations, submitEccentricityObservations, submitRepeatabilityObservations, submitFullInspection, getPendingApprovalInspections, getApprovedInspectionReports, verifyCertificate, approveInspection } from "../controllers/instrumentController.js";
+import { registerInstrument, getMyEvaluations, getSupervisorEvaluations, getEvaluationDocuments, uploadEvaluationDocument, completeEvaluationDocuments, saveEvaluationEnvironment, generateTestPlanController, getTestExecutionData, reviewSupervisorEvaluation, getGeneratedReport, getGeneratedReports, getAllGeneratedReportsAdmin, verifyReport, getInstrumentForTesting, getWeighingTestConfig, getRepeatabilityTestConfig, getEccentricityTestConfig, getTareTestConfig, submitTareTest, completeUnimplementedTest, uploadGeneralExaminationPhoto, uploadWeighingEvidence, submitGeneralExamination, submitInstrumentObservations, submitEccentricityObservations, submitRepeatabilityObservations, submitFullInspection, getPendingApprovalInspections, getApprovedInspectionReports, verifyCertificate, approveInspection } from "../controllers/instrumentController.js";
 
 import { uploadInstrumentPicture } from "../middleware/instrumentPictureUpload.js";
 import { uploadEvaluationDocument as documentUpload } from "../middleware/evaluationDocumentUpload.js";
@@ -14,6 +14,7 @@ router.post('/register',checkAuth,uploadInstrumentPicture.single('nameplatePhoto
 router.get('/my-evaluations', checkAuth, getMyEvaluations);
 router.get('/supervisor-evaluations', checkAuth, getSupervisorEvaluations);
 router.get('/supervisor-reports', checkAuth, getGeneratedReports);
+router.get('/admin/generated-reports', checkAuth, getAllGeneratedReportsAdmin);
 router.get('/:applicationId/documents', checkAuth, getEvaluationDocuments);
 router.post('/:applicationId/documents', checkAuth, documentUpload.single('document'), uploadEvaluationDocument);
 router.post('/:applicationId/documents/complete', checkAuth, completeEvaluationDocuments);
@@ -25,6 +26,7 @@ router.get('/:applicationId/report', checkAuth, getGeneratedReport);
 router.get('/admin/pending-approval', getPendingApprovalInspections);
 router.get('/admin/approved-reports', getApprovedInspectionReports);
 router.get('/certificate/:number', verifyCertificate);
+router.get('/reports/verify/:reportId', verifyReport);
 router.post('/:id/approve', approveInspection);
 router.post('/ncr', checkAuth, ncrEvidenceUpload.array('evidence', 10), createNonComplianceReport);
 router.get('/ncr', checkAuth, getNonComplianceReports);
