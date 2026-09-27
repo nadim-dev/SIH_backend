@@ -9,6 +9,8 @@ import Counter from "../models/counterModel.js";
 import Evaluation from "../models/evaluationModel.js";
 import { recordAudit } from "../utils/auditLogger.js";
 import Notification from "../models/notificationModel.js";
+import { sessionCookieOptions } from "../config/sessionCookie.js";
+import { clearSessionCookie } from "../config/sessionCookie.js";
 
 export const getAdminUsers = async (req, res) => {
   try {
@@ -220,10 +222,10 @@ export const logoutUser = async (req, res) => {
   try {
     const sessionId = req.signedCookies?.sid;
     if (sessionId) await redisClient.del(`session:${sessionId}`);
-    res.clearCookie("sid", { httpOnly: true, signed: true, sameSite: "lax", path: "/" });
+    clearSessionCookie(res);
     return res.status(200).json({ message: "Logout successful" });
   } catch (error) {
-    res.clearCookie("sid", { httpOnly: true, signed: true, sameSite: "lax", path: "/" });
+    clearSessionCookie(res);
     return res.status(200).json({ message: "Logout successful" });
   }
 };
@@ -333,9 +335,7 @@ export const loginUser = async (req, res) => {
     await redisClient.expire(rediskey, sessionExpiryTime);
 
     res.cookie("sid", sessionId, {
-      httpOnly: true,
-      signed: true,
-      sameSite: "lax",
+      ...sessionCookieOptions,
       maxAge: sessionExpiryTime * 1000,
     });
 
