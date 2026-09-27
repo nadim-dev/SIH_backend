@@ -1,5 +1,5 @@
 import express from "express";
-import { registerInstrument, getMyEvaluations, getTestingDashboardSummary, getSupervisorEvaluations, getEvaluationDocuments, uploadEvaluationDocument, completeEvaluationDocuments, saveEvaluationEnvironment, generateTestPlanController, getTestExecutionData, reviewSupervisorEvaluation, getGeneratedReport, getGeneratedReports, getAllGeneratedReportsAdmin, verifyReport, getInstrumentForTesting, getWeighingTestConfig, getRepeatabilityTestConfig, getEccentricityTestConfig, getTareTestConfig, submitTareTest, completeUnimplementedTest, uploadGeneralExaminationPhoto, extractRegistrationNameplateOcr, extractNameplateOcr, uploadWeighingEvidence, submitGeneralExamination, submitInstrumentObservations, submitEccentricityObservations, submitRepeatabilityObservations, submitFullInspection, getPendingApprovalInspections, getApprovedInspectionReports, verifyCertificate, approveInspection } from "../controllers/instrumentController.js";
+import { registerInstrument, getMyEvaluations, getTestingDashboardSummary, getSupervisorEvaluations, getEvaluationDocuments, uploadEvaluationDocument, completeEvaluationDocuments, saveEvaluationEnvironment, generateTestPlanController, getTestExecutionData, reviewSupervisorEvaluation, getGeneratedReport, getGeneratedReports, getAllGeneratedReportsAdmin, verifyReport, getInstrumentForTesting, getWeighingTestConfig, getRepeatabilityTestConfig, getEccentricityTestConfig, getTareTestConfig, submitTareTest, completeUnimplementedTest, uploadGeneralExaminationPhoto, extractRegistrationNameplateOcr, extractNameplateOcr, uploadWeighingEvidence, deleteWeighingEvidence, submitGeneralExamination, submitInstrumentObservations, submitEccentricityObservations, submitRepeatabilityObservations, submitFullInspection, getPendingApprovalInspections, getApprovedInspectionReports, verifyCertificate, approveInspection } from "../controllers/instrumentController.js";
 
 import { uploadInstrumentPicture } from "../middleware/instrumentPictureUpload.js";
 import { uploadEvaluationDocument as documentUpload } from "../middleware/evaluationDocumentUpload.js";
@@ -40,6 +40,7 @@ router.get('/:id', getInstrumentForTesting);
 router.post('/:id/general-examination/photo', uploadInstrumentPicture.single('photo'), uploadGeneralExaminationPhoto);
 router.post('/:id/general-examination/nameplate-ocr', checkAuth, uploadInstrumentPicture.single('photo'), extractNameplateOcr);
 router.post('/:id/weighing-test/evidence', checkAuth, uploadInstrumentPicture.single('photo'), uploadWeighingEvidence);
+router.delete('/:id/weighing-test/evidence', checkAuth, deleteWeighingEvidence);
 router.post('/:id/general-examination/complete', checkAuth, submitGeneralExamination);
 router.get('/:id/weighing-test/config', checkAuth, getWeighingTestConfig);
 router.get('/:id/repeatability-test/config', checkAuth, getRepeatabilityTestConfig);

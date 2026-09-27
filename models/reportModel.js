@@ -14,6 +14,7 @@ const reportSchema = new mongoose.Schema(
     testResults: { type: mongoose.Schema.Types.Mixed, required: true },
     supervisorId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     laboratoryName: { type: String, default: null },
+    laboratoryDetails: { type: mongoose.Schema.Types.Mixed, default: null },
     approvedAt: { type: Date, required: true },
   },
   { timestamps: true },

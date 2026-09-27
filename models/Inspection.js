@@ -66,6 +66,7 @@ const InspectionSchema = new mongoose.Schema(
       readings: [ObservationRowSchema],
       evidence: [{
         url: { type: String, required: true },
+        publicId: { type: String, default: null },
         uploadedAt: { type: Date, default: Date.now },
         location: {
           latitude: { type: Number, default: null },
@@ -84,7 +85,7 @@ const InspectionSchema = new mongoose.Schema(
       generatedPoints: [EccentricityPointSchema],
       testLoad: { type: mongoose.Schema.Types.Decimal128 },
       positions: [ObservationRowSchema], // Center, Front-Left, Front-Right, Rear-Right, Rear-Left
-      evidence: [{ url: String, uploadedAt: { type: Date, default: Date.now }, location: { latitude: Number, longitude: Number, address: String } }],
+      evidence: [{ url: String, publicId: String, uploadedAt: { type: Date, default: Date.now }, location: { latitude: Number, longitude: Number, address: String } }],
       passed: { type: Boolean, default: false }
     },
 
@@ -103,14 +104,14 @@ const InspectionSchema = new mongoose.Schema(
       variation: { type: mongoose.Schema.Types.Decimal128 },
       variationRange: { type: mongoose.Schema.Types.Decimal128 },
       mpeLimit: { type: mongoose.Schema.Types.Decimal128 },
-      evidence: [{ url: String, uploadedAt: { type: Date, default: Date.now }, location: { latitude: Number, longitude: Number, address: String } }],
+      evidence: [{ url: String, publicId: String, uploadedAt: { type: Date, default: Date.now }, location: { latitude: Number, longitude: Number, address: String } }],
       passed: { type: Boolean, default: false }
     },
     tareTest: {
       tareType: String,
       tareValues: [mongoose.Schema.Types.Decimal128],
       points: [TarePointSchema],
-      evidence: [{ url: String, uploadedAt: { type: Date, default: Date.now }, location: { latitude: Number, longitude: Number, address: String } }],
+      evidence: [{ url: String, publicId: String, uploadedAt: { type: Date, default: Date.now }, location: { latitude: Number, longitude: Number, address: String } }],
       passed: { type: Boolean, default: false },
     },
 
