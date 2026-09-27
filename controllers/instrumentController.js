@@ -7,7 +7,6 @@ import { uploadBufferToCloudinary } from "../utils/uploadImagetoCloudinary.js";
 import { reverseGeocode } from "../utils/reverseGeocode.js";
 import { sanitize } from "../utils/sanitize.js";
 import { observationsSchema, eccentricityObservationsSchema } from "../validators/instrumentValidation.js";
-import crypto from "node:crypto";
 import Evaluation from "../models/evaluationModel.js";
 import Document from "../models/documentModel.js";
 import TestEnvironment from "../models/testEnviromentModel.js";
@@ -20,29 +19,7 @@ import Report from "../models/reportModel.js";
 import { generateTestPlan } from "../utils/generateTestPlan.js";
 import { recordAudit } from "../utils/auditLogger.js";
 import Laboratory from "../models/laboratoryModel.js";
-
-const canonicalize = (value) => {
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (value && typeof value === "object") {
-    return Object.keys(value).sort().reduce((result, key) => {
-      if (!["_id", "createdAt", "updatedAt", "reportHash", "qrCode"].includes(key)) result[key] = canonicalize(value[key]);
-      return result;
-    }, {});
-  }
-  return value;
-};
-
-const createReportHash = (report) => crypto.createHash("sha256").update(JSON.stringify(canonicalize({
-  evaluationId: report.evaluationId,
-  inspectionId: report.inspectionId,
-  instrumentId: report.instrumentId,
-  reportStatus: report.reportStatus,
-  instrumentDetails: report.instrumentDetails,
-  testPlan: report.testPlan,
-  testResults: report.testResults,
-  supervisorId: report.supervisorId,
-  approvedAt: report.approvedAt,
-}))).digest("hex");
+import { createReportHash } from "../utils/reportHash.js";
 
 const OIML_MPE_INTERVALS = {
   I: [50000, 200000],
@@ -270,6 +247,37 @@ export const getMyEvaluations = async (req, res) => {
     return res.json({ success: true, data: evaluations });
   } catch (error) {
     return res.status(500).json({ success: false, error: "Failed to fetch evaluations." });
+  }
+};
+
+export const getTestingDashboardSummary = async (req, res) => {
+  try {
+    const adminRoles = ["NAWI ADMIN", "NAWI_ADMIN", "ADMIN", "ADMINISTRATOR"];
+    const isAdmin = adminRoles.includes(String(req.user.role || "").trim().toUpperCase());
+    let testingOfficerId = req.user._id;
+
+    if (req.query.officerId && (isAdmin || req.user.role === "LAB SUPERVISOR")) {
+      if (!mongoose.isValidObjectId(req.query.officerId)) {
+        return res.status(400).json({ success: false, message: "A valid officer ID is required." });
+      }
+      const officerQuery = { _id: req.query.officerId, role: "TESTING OFFICER" };
+      if (!isAdmin) officerQuery.supervisorId = req.user._id;
+      const officer = await User.findOne(officerQuery).select("_id").lean();
+      if (!officer) return res.status(404).json({ success: false, message: "Testing officer not found under this supervisor." });
+      testingOfficerId = officer._id;
+    }
+
+    const [registeredInstruments, testsInProgress, awaitingReview, completedTests] = await Promise.all([
+      Instrument.countDocuments({ registeredBy: testingOfficerId }),
+      Evaluation.countDocuments({ testingOfficerId, status: { $in: ["TESTING", "COMPLIANCE_EVALUATION"] } }),
+      Evaluation.countDocuments({ testingOfficerId, status: "SUPERVISOR_REVIEW" }),
+      Evaluation.countDocuments({ testingOfficerId, status: "COMPLETED" }),
+    ]);
+
+    return res.json({ success: true, data: { registeredInstruments, testsInProgress, awaitingReview, completedTests } });
+  } catch (error) {
+    console.error("Get testing dashboard summary error:", error);
+    return res.status(500).json({ success: false, message: "Failed to fetch testing dashboard summary." });
   }
 };
 
@@ -834,6 +842,60 @@ export const uploadGeneralExaminationPhoto = async (req, res) => {
   } catch (error) {
     console.error('General examination photo upload error:', error);
     return res.status(400).json({ success: false, message: error.message || 'Failed to upload photo.' });
+  }
+};
+
+const extractNameplateFields = async (file) => {
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) throw new Error("Nameplate OCR is not configured on the server.");
+
+    const mimeType = file.mimetype === "image/jpg" ? "image/jpeg" : file.mimetype;
+    const image = `data:${mimeType};base64,${file.buffer.toString("base64")}`;
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: process.env.GROQ_VISION_MODEL || "qwen/qwen3.8-27b",
+        temperature: 0,
+        max_tokens: 700,
+        messages: [
+          { role: "system", content: "Read weighing instrument nameplate images. Return only valid JSON with keys manufacturer, modelNumber, serialNumber, instrumentType, accuracyClass, max, min, verificationScaleInterval, actualScaleInterval, unit, typeApprovalMark, softwareId. Use strings for values and empty strings for unreadable or absent values. Do not infer missing values." },
+          { role: "user", content: [{ type: "text", text: "Extract every requested value from this nameplate. Preserve the printed value and units." }, { type: "image_url", image_url: { url: image } }] },
+        ],
+        response_format: { type: "json_object" },
+      }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      console.error("Groq nameplate OCR error:", response.status, result?.error?.message || "request failed");
+      throw new Error("OCR could not read the nameplate. Try a clearer image.");
+    }
+    const content = result.choices?.[0]?.message?.content;
+    const fields = JSON.parse(content || "{}");
+    const allowedFields = ["manufacturer", "modelNumber", "serialNumber", "instrumentType", "accuracyClass", "max", "min", "verificationScaleInterval", "actualScaleInterval", "unit", "typeApprovalMark", "softwareId"];
+    return Object.fromEntries(allowedFields.map((key) => [key, String(fields[key] ?? "").trim()]));
+};
+
+export const extractRegistrationNameplateOcr = async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: "A nameplate image is required." });
+    return res.json({ success: true, data: await extractNameplateFields(req.file) });
+  } catch (error) {
+    console.error("Registration nameplate OCR error:", error.message);
+    const status = error.message.includes("not configured") ? 503 : 502;
+    return res.status(status).json({ success: false, message: error.message || "OCR failed to process the nameplate image." });
+  }
+};
+
+export const extractNameplateOcr = async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ success: false, message: "A valid instrument ID is required." });
+    if (!req.file) return res.status(400).json({ success: false, message: "A nameplate image is required." });
+    if (!(await Instrument.exists({ _id: req.params.id }))) return res.status(404).json({ success: false, message: "Instrument not found." });
+    return res.json({ success: true, data: await extractNameplateFields(req.file) });
+  } catch (error) {
+    console.error("Nameplate OCR error:", error.message);
+    return res.status(502).json({ success: false, message: "OCR failed to process the nameplate image." });
   }
 };
 

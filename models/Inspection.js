@@ -149,7 +149,7 @@ const InspectionSchema = new mongoose.Schema(
     allTestsPassed: { type: Boolean, default: false },
     inspectionStatus: {
       type: String,
-      enum: ['IN_PROGRESS', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED'],
+      enum: ['IN_PROGRESS', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED', 'NON_COMPLIANT'],
       default: 'IN_PROGRESS'
     } ,
 

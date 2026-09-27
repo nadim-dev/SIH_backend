@@ -6,6 +6,7 @@ const reportSchema = new mongoose.Schema(
     inspectionId: { type: mongoose.Schema.Types.ObjectId, ref: "Inspection", required: true },
     instrumentId: { type: mongoose.Schema.Types.ObjectId, ref: "Instrument", required: true },
     reportStatus: { type: String, enum: ["GENERATED", "FINALIZED"], default: "GENERATED" },
+    complianceStatus: { type: String, enum: ["COMPLIANT", "NON_COMPLIANT"] },
     reportHash: { type: String, default: null, index: true },
     qrCode: { type: String, default: null },
     instrumentDetails: { type: mongoose.Schema.Types.Mixed, required: true },

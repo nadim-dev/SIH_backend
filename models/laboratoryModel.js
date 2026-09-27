@@ -11,6 +11,7 @@ const laboratorySchema = new mongoose.Schema(
     pinCode: { type: String, required: true, trim: true },
     officialEmail: { type: String, required: true, trim: true, lowercase: true },
     contactNumber: { type: String, required: true, trim: true },
+    logoUrl: { type: String, default: "" },
     location: { type: String, required: true, trim: true },
     supervisorId: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     status: { type: String, enum: ["ACTIVE", "INACTIVE"], default: "ACTIVE" },

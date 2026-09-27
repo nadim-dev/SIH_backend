@@ -1,6 +1,49 @@
 import Laboratory from "../models/laboratoryModel.js";
 import User from "../models/userModel.js";
 import bcrypt from "bcrypt";
+import { uploadBufferToCloudinary } from "../utils/uploadImagetoCloudinary.js";
+
+const getSupervisorLaboratory = async (supervisorId) => {
+  const supervisor = await User.findById(supervisorId).select("labId").lean();
+  if (supervisor?.labId) {
+    const linkedLaboratory = await Laboratory.findById(supervisor.labId).lean();
+    if (linkedLaboratory) return linkedLaboratory;
+  }
+  return Laboratory.findOne({ supervisorId }).lean();
+};
+
+export const getMyLaboratoryProfile = async (req, res) => {
+  try {
+    const laboratory = await getSupervisorLaboratory(req.user._id);
+    if (!laboratory) return res.status(404).json({ success: false, message: "No laboratory is linked to this supervisor account." });
+    return res.json({ success: true, data: laboratory });
+  } catch (error) {
+    console.error("Get supervisor laboratory profile error:", error);
+    return res.status(500).json({ success: false, message: "Unable to load laboratory profile." });
+  }
+};
+
+export const updateMyLaboratoryProfile = async (req, res) => {
+  try {
+    const laboratory = await getSupervisorLaboratory(req.user._id);
+    if (!laboratory) return res.status(404).json({ success: false, message: "No laboratory is linked to this supervisor account." });
+    const fields = ["address", "city", "state", "pinCode", "officialEmail", "contactNumber"];
+    const values = Object.fromEntries(fields.map((field) => [field, String(req.body[field] || "").trim()]));
+    values.officialEmail = values.officialEmail.toLowerCase();
+    if (fields.some((field) => !values[field])) return res.status(400).json({ success: false, message: "Complete all required laboratory fields." });
+    if (!/^\d{6}$/.test(values.pinCode)) return res.status(400).json({ success: false, message: "PIN Code must contain 6 digits." });
+    const update = { ...values, location: `${values.city}, ${values.state}` };
+    if (req.file) {
+      const uploaded = await uploadBufferToCloudinary(req.file.buffer, { folder: "SIH/laboratories/logos", resource_type: "image" });
+      update.logoUrl = uploaded.secure_url;
+    }
+    const saved = await Laboratory.findByIdAndUpdate(laboratory._id, { $set: update }, { new: true, runValidators: true }).lean();
+    return res.json({ success: true, message: "Laboratory profile updated.", data: saved });
+  } catch (error) {
+    console.error("Update supervisor laboratory profile error:", error);
+    return res.status(500).json({ success: false, message: "Unable to update laboratory profile." });
+  }
+};
 
 const adminOnly = (req, res) => {
   if (["NAWI_ADMIN", "ADMIN", "ADMINISTRATOR"].includes(String(req.user.role || "").trim().toUpperCase())) return true;

@@ -1,18 +1,22 @@
 import express from "express";
-import { registerInstrument, getMyEvaluations, getSupervisorEvaluations, getEvaluationDocuments, uploadEvaluationDocument, completeEvaluationDocuments, saveEvaluationEnvironment, generateTestPlanController, getTestExecutionData, reviewSupervisorEvaluation, getGeneratedReport, getGeneratedReports, getAllGeneratedReportsAdmin, verifyReport, getInstrumentForTesting, getWeighingTestConfig, getRepeatabilityTestConfig, getEccentricityTestConfig, getTareTestConfig, submitTareTest, completeUnimplementedTest, uploadGeneralExaminationPhoto, uploadWeighingEvidence, submitGeneralExamination, submitInstrumentObservations, submitEccentricityObservations, submitRepeatabilityObservations, submitFullInspection, getPendingApprovalInspections, getApprovedInspectionReports, verifyCertificate, approveInspection } from "../controllers/instrumentController.js";
+import { registerInstrument, getMyEvaluations, getTestingDashboardSummary, getSupervisorEvaluations, getEvaluationDocuments, uploadEvaluationDocument, completeEvaluationDocuments, saveEvaluationEnvironment, generateTestPlanController, getTestExecutionData, reviewSupervisorEvaluation, getGeneratedReport, getGeneratedReports, getAllGeneratedReportsAdmin, verifyReport, getInstrumentForTesting, getWeighingTestConfig, getRepeatabilityTestConfig, getEccentricityTestConfig, getTareTestConfig, submitTareTest, completeUnimplementedTest, uploadGeneralExaminationPhoto, extractRegistrationNameplateOcr, extractNameplateOcr, uploadWeighingEvidence, submitGeneralExamination, submitInstrumentObservations, submitEccentricityObservations, submitRepeatabilityObservations, submitFullInspection, getPendingApprovalInspections, getApprovedInspectionReports, verifyCertificate, approveInspection } from "../controllers/instrumentController.js";
 
 import { uploadInstrumentPicture } from "../middleware/instrumentPictureUpload.js";
 import { uploadEvaluationDocument as documentUpload } from "../middleware/evaluationDocumentUpload.js";
 import checkAuth from "../middleware/authMiddleware.js";
 import { ncrEvidenceUpload } from "../middleware/ncrEvidenceUpload.js";
 import { createNonComplianceReport, getNonComplianceReports, getLatestNonComplianceReport, reviewNonComplianceReport } from "../controllers/nonComplianceController.js";
+import { getSupervisorDashboardSummary } from "../controllers/adminDashboardController.js";
 const router=express.Router();
 
 
 
 router.post('/register',checkAuth,uploadInstrumentPicture.single('nameplatePhoto'), registerInstrument);
+router.post('/nameplate-ocr', checkAuth, uploadInstrumentPicture.single('photo'), extractRegistrationNameplateOcr);
 router.get('/my-evaluations', checkAuth, getMyEvaluations);
+router.get('/testing-dashboard-summary', checkAuth, getTestingDashboardSummary);
 router.get('/supervisor-evaluations', checkAuth, getSupervisorEvaluations);
+router.get('/supervisor-dashboard-summary', checkAuth, getSupervisorDashboardSummary);
 router.get('/supervisor-reports', checkAuth, getGeneratedReports);
 router.get('/admin/generated-reports', checkAuth, getAllGeneratedReportsAdmin);
 router.get('/:applicationId/documents', checkAuth, getEvaluationDocuments);
@@ -34,6 +38,7 @@ router.get('/ncr/instrument/:instrumentId', checkAuth, getLatestNonComplianceRep
 router.patch('/ncr/:ncrId/review', checkAuth, reviewNonComplianceReport);
 router.get('/:id', getInstrumentForTesting);
 router.post('/:id/general-examination/photo', uploadInstrumentPicture.single('photo'), uploadGeneralExaminationPhoto);
+router.post('/:id/general-examination/nameplate-ocr', checkAuth, uploadInstrumentPicture.single('photo'), extractNameplateOcr);
 router.post('/:id/weighing-test/evidence', checkAuth, uploadInstrumentPicture.single('photo'), uploadWeighingEvidence);
 router.post('/:id/general-examination/complete', checkAuth, submitGeneralExamination);
 router.get('/:id/weighing-test/config', checkAuth, getWeighingTestConfig);

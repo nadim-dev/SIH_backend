@@ -231,7 +231,7 @@ export const logoutUser = async (req, res) => {
 export const getCurrentUser = async (req, res) => {
   try {
     const user = await User.findById(req.user._id)
-      .select("name email role accountStatus")
+      .select("name email role accountStatus phone dateOfBirth gender officerId profileImage createdAt labId")
       .lean();
 
     if (!user) {
@@ -241,6 +241,44 @@ export const getCurrentUser = async (req, res) => {
     return res.status(200).json({ currentUser: user });
   } catch (error) {
     return res.status(500).json({ message: "Unable to restore session" });
+  }
+};
+
+export const updateMyProfile = async (req, res) => {
+  try {
+    const name = String(req.body.name || "").trim();
+    const phone = String(req.body.phone || "").trim();
+    const gender = String(req.body.gender || "").trim();
+    const dateOfBirth = req.body.dateOfBirth ? new Date(req.body.dateOfBirth) : null;
+    if (name.length < 2 || name.length > 100) return res.status(400).json({ message: "Name must be between 2 and 100 characters." });
+    if (phone && !/^[+\d()\-\s]{7,20}$/.test(phone)) return res.status(400).json({ message: "Enter a valid phone number." });
+    if (gender && !["Female", "Male", "Non-binary", "Prefer not to say"].includes(gender)) return res.status(400).json({ message: "Select a valid gender option." });
+    if (dateOfBirth && (Number.isNaN(dateOfBirth.getTime()) || dateOfBirth > new Date())) return res.status(400).json({ message: "Enter a valid date of birth." });
+
+    const user = await User.findByIdAndUpdate(req.user._id, { $set: { name, phone, gender, dateOfBirth } }, { new: true, runValidators: true })
+      .select("name email role accountStatus phone dateOfBirth gender officerId profileImage createdAt labId").lean();
+    if (!user) return res.status(404).json({ message: "User account not found." });
+    return res.status(200).json({ message: "Profile updated.", currentUser: user });
+  } catch (error) {
+    console.error("Update profile error:", error);
+    return res.status(500).json({ message: "Unable to update profile." });
+  }
+};
+
+export const changeMyPassword = async (req, res) => {
+  try {
+    const currentPassword = String(req.body.currentPassword || "");
+    const newPassword = String(req.body.newPassword || "");
+    if (newPassword.length < 8) return res.status(400).json({ message: "New password must be at least 8 characters." });
+    const user = await User.findById(req.user._id).select("passwordHash");
+    if (!user) return res.status(404).json({ message: "User account not found." });
+    if (!(await bcrypt.compare(currentPassword, user.passwordHash))) return res.status(400).json({ message: "Current password is incorrect." });
+    user.passwordHash = await bcrypt.hash(newPassword, 12);
+    await user.save();
+    return res.status(200).json({ message: "Password changed successfully." });
+  } catch (error) {
+    console.error("Change password error:", error);
+    return res.status(500).json({ message: "Unable to change password." });
   }
 };
 

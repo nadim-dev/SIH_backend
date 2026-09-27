@@ -1,8 +1,11 @@
 import express from "express";
 import checkAuth, { allowRoles } from "../middleware/authMiddleware.js";
-import { createLaboratory, deleteLaboratory, getLaboratories, updateLaboratoryStatus } from "../controllers/laboratoryController.js";
+import { createLaboratory, deleteLaboratory, getLaboratories, getMyLaboratoryProfile, updateLaboratoryStatus, updateMyLaboratoryProfile } from "../controllers/laboratoryController.js";
+import { uploadInstrumentPicture } from "../middleware/instrumentPictureUpload.js";
 
 const router = express.Router();
+router.get("/my/profile", checkAuth, allowRoles("LAB SUPERVISOR"), getMyLaboratoryProfile);
+router.patch("/my/profile", checkAuth, allowRoles("LAB SUPERVISOR"), uploadInstrumentPicture.single("logo"), updateMyLaboratoryProfile);
 router.use(checkAuth, allowRoles("NAWI_ADMIN", "ADMIN", "ADMINISTRATOR"));
 router.get("/", getLaboratories);
 router.post("/", createLaboratory);

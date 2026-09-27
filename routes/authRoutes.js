@@ -1,5 +1,5 @@
 import express from "express";
-import { activateTestingOfficer, createTestingOfficer, deactivateTestingOfficer, deleteAdminUser, deleteTestingOfficer, getAdminUsers, getCurrentUser, getTestingOfficers, loginUser, logoutUser, updateAdminUserStatus } from "../controllers/authController.js";
+import { activateTestingOfficer, changeMyPassword, createTestingOfficer, deactivateTestingOfficer, deleteAdminUser, deleteTestingOfficer, getAdminUsers, getCurrentUser, getTestingOfficers, loginUser, logoutUser, updateAdminUserStatus, updateMyProfile } from "../controllers/authController.js";
 import checkAuth, { allowRoles } from "../middleware/authMiddleware.js";
 
 const router=express.Router();
@@ -7,6 +7,8 @@ const router=express.Router();
 
 router.post("/login",loginUser);
 router.get("/me", checkAuth, getCurrentUser);
+router.patch("/me/profile", checkAuth, updateMyProfile);
+router.patch("/me/password", checkAuth, changeMyPassword);
 router.post("/logout", checkAuth, logoutUser);
 router.get("/users", checkAuth, allowRoles("NAWI_ADMIN", "ADMIN", "ADMINISTRATOR"), getAdminUsers);
 router.patch("/users/:userId/status", checkAuth, allowRoles("NAWI_ADMIN", "ADMIN", "ADMINISTRATOR"), updateAdminUserStatus);
