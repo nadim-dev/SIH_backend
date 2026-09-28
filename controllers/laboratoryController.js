@@ -1,5 +1,6 @@
 import Laboratory from "../models/laboratoryModel.js";
 import User from "../models/userModel.js";
+import Report from "../models/reportModel.js";
 import bcrypt from "bcrypt";
 import { uploadBufferToCloudinary } from "../utils/uploadImagetoCloudinary.js";
 
@@ -37,7 +38,7 @@ export const updateMyLaboratoryProfile = async (req, res) => {
       const uploaded = await uploadBufferToCloudinary(req.file.buffer, { folder: "SIH/laboratories/logos", resource_type: "image" });
       update.logoUrl = uploaded.secure_url;
     }
-    const saved = await Laboratory.findByIdAndUpdate(laboratory._id, { $set: update }, { new: true, runValidators: true }).lean();
+    const saved = await Laboratory.findByIdAndUpdate(laboratory._id, { $set: update }, { returnDocument: "after", runValidators: true }).lean();
     return res.json({ success: true, message: "Laboratory profile updated.", data: saved });
   } catch (error) {
     console.error("Update supervisor laboratory profile error:", error);
@@ -94,6 +95,72 @@ export const getLaboratories = async (req, res) => {
   }
 };
 
+export const getLaboratoriesUsingCurrentOimlVersion = async (req, res) => {
+  try {
+    if (!adminOnly(req, res)) return;
+    const currentVersion = "R 76-1:2006";
+    const [laboratories, reports] = await Promise.all([
+      Laboratory.find().select("name state status").sort({ name: 1 }).lean(),
+      Report.find({ reportStatus: { $in: ["GENERATED", "FINALIZED"] } })
+        .select("laboratoryName laboratoryDetails supervisorId")
+        .populate({ path: "supervisorId", select: "labId", populate: { path: "labId", select: "name" } })
+        .lean(),
+    ]);
+
+    const reportsByLaboratory = new Map();
+    reports.forEach((report) => {
+      const laboratoryName = report.supervisorId?.labId?.name
+        || report.laboratoryName
+        || report.laboratoryDetails?.name;
+      const key = String(laboratoryName || "").trim().toLocaleLowerCase();
+      if (key) reportsByLaboratory.set(key, (reportsByLaboratory.get(key) || 0) + 1);
+    });
+
+    const data = laboratories.map((laboratory) => ({
+      _id: laboratory._id,
+      name: laboratory.name,
+      state: laboratory.state,
+      status: laboratory.status,
+      oimlVersion: currentVersion,
+      versionStatus: `Using (${currentVersion})`,
+      adoptedAt: "16/09/2026",
+      reportsGenerated: reportsByLaboratory.get(String(laboratory.name || "").trim().toLocaleLowerCase()) || 0,
+    }));
+
+    return res.json({
+      success: true,
+      standardVersion: currentVersion,
+      summary: { totalLaboratories: data.length, laboratoriesUsingVersion: data.length },
+      data,
+    });
+  } catch (error) {
+    console.error("Get laboratories using current OIML version error:", error);
+    return res.status(500).json({ success: false, message: "Unable to load laboratories using the current OIML version." });
+  }
+};
+
+export const getLaboratoryProfileForAdmin = async (req, res) => {
+  try {
+    if (!adminOnly(req, res)) return;
+    const laboratory = await Laboratory.findById(req.params.id)
+      .select("name code type address city state pinCode officialEmail contactNumber location logoUrl status createdAt")
+      .populate("supervisorId", "name email phone")
+      .lean();
+    if (!laboratory) return res.status(404).json({ success: false, message: "Laboratory not found." });
+
+    if (!laboratory.supervisorId) {
+      laboratory.supervisorId = await User.findOne({ role: "LAB SUPERVISOR", labId: laboratory._id })
+        .select("name email phone")
+        .lean();
+    }
+
+    return res.json({ success: true, data: laboratory });
+  } catch (error) {
+    console.error("Get laboratory profile for admin error:", error);
+    return res.status(500).json({ success: false, message: "Unable to load the laboratory profile." });
+  }
+};
+
 export const createLaboratory = async (req, res) => {
   let laboratory;
   try {
@@ -125,7 +192,7 @@ export const updateLaboratoryStatus = async (req, res) => {
     if (!adminOnly(req, res)) return;
     const status = String(req.body.status || "").toUpperCase();
     if (!["ACTIVE", "INACTIVE"].includes(status)) return res.status(400).json({ success: false, message: "Invalid laboratory status." });
-    const laboratory = await Laboratory.findByIdAndUpdate(req.params.id, { $set: { status } }, { new: true }).populate("supervisorId", "name email").lean();
+    const laboratory = await Laboratory.findByIdAndUpdate(req.params.id, { $set: { status } }, { returnDocument: "after" }).populate("supervisorId", "name email").lean();
     if (!laboratory) return res.status(404).json({ success: false, message: "Laboratory not found." });
     return res.json({ success: true, data: laboratory });
   } catch (error) {

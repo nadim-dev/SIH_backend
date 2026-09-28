@@ -383,7 +383,7 @@ export const generateTestPlanController = async (req, res) => {
       await Inspection.findOneAndUpdate(
         { instrumentId: instrument._id },
         { $setOnInsert: { instrumentId: instrument._id, evaluationId: evaluation._id } },
-        { upsert: true, new: true, setDefaultsOnInsert: true },
+        { upsert: true, returnDocument: "after", setDefaultsOnInsert: true },
       );
       if (!existingPlan.tests?.length) {
         existingPlan.tests = tests;
@@ -426,7 +426,7 @@ export const generateTestPlanController = async (req, res) => {
     await Inspection.findOneAndUpdate(
       { instrumentId: instrument._id },
       { $setOnInsert: { instrumentId: instrument._id, evaluationId: evaluation._id } },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
+      { upsert: true, returnDocument: "after", setDefaultsOnInsert: true },
     );
 
     // 5. Update evaluation
@@ -461,6 +461,17 @@ export const getTestExecutionData = async (req, res) => {
       .populate("testPlanId");
     if (!evaluation) return res.status(404).json({ success: false, message: "Evaluation not found." });
     if (!evaluation.testPlanId) return res.status(404).json({ success: false, message: "Test plan has not been generated." });
+    // Add newly introduced, applicable rules to existing active plans without resetting existing progress.
+    const expectedTests = generateTestPlan(evaluation.instrumentId);
+    const sensitivityRule = expectedTests.find((test) => test.code === "SENSITIVITY");
+    const plan = evaluation.testPlanId;
+    if (sensitivityRule && !plan.tests.some((test) => test.code === "SENSITIVITY")) {
+      const temperatureIndex = plan.tests.findIndex((test) => test.code === "TEMPERATURE_INFLUENCE");
+      const ruleToInsert = typeof sensitivityRule.toObject === "function" ? sensitivityRule.toObject() : sensitivityRule;
+      plan.tests.splice(temperatureIndex >= 0 ? temperatureIndex + 1 : plan.tests.length, 0, ruleToInsert);
+      plan.tests.forEach((test, index) => { test.sequence = index + 1; });
+      await plan.save();
+    }
     const inspection = await Inspection.findOne({ evaluationId: evaluation._id })
       || await Inspection.findOne({ instrumentId: evaluation.instrumentId?._id || evaluation.instrumentId });
     return res.json({ success: true, data: { evaluation, instrument: evaluation.instrumentId, testPlan: evaluation.testPlanId, inspection } });
@@ -532,7 +543,7 @@ export const reviewSupervisorEvaluation = async (req, res) => {
             approvedAt,
           },
         },
-        { new: true, upsert: true, setDefaultsOnInsert: true },
+        { returnDocument: "after", upsert: true, setDefaultsOnInsert: true },
       );
       const reportHash = createReportHash(report.toObject());
       const frontendUrl = (process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/$/, "");
@@ -709,7 +720,7 @@ export const uploadEvaluationDocument = async (req, res) => {
         uploadedBy: req.user._id,
         uploadedAt: new Date(),
       },
-      { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true },
+      { returnDocument: "after", upsert: true, runValidators: true, setDefaultsOnInsert: true },
     );
 
     return res.status(201).json({ success: true, data: document });
@@ -743,7 +754,7 @@ export const completeEvaluationDocuments = async (req, res) => {
           progress: 25,
         },
       },
-      { new: true, runValidators: true },
+      { returnDocument: "after", runValidators: true },
     );
 
     return res.json({ success: true, data: updatedEvaluation });
@@ -790,7 +801,7 @@ export const saveEvaluationEnvironment = async (req, res) => {
         recordedAt: new Date(),
         recordedBy: req.user._id,
       },
-      { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true },
+      { returnDocument: "after", upsert: true, runValidators: true, setDefaultsOnInsert: true },
     );
 
     const updatedEvaluation = await Evaluation.findByIdAndUpdate(
@@ -804,7 +815,7 @@ export const saveEvaluationEnvironment = async (req, res) => {
           progress: 35,
         },
       },
-      { new: true, runValidators: true },
+      { returnDocument: "after", runValidators: true },
     );
 
     return res.json({ success: true, data: { environment, evaluation: updatedEvaluation } });
@@ -902,7 +913,7 @@ export const uploadGeneralExaminationPhoto = async (req, res) => {
     const inspection = await Inspection.findOneAndUpdate(
       { instrumentId },
       { $set: { instrumentId, [`generalExamination.photos.${photoKey}`]: uploaded.secure_url } },
-      { new: true, upsert: true, setDefaultsOnInsert: true },
+      { returnDocument: "after", upsert: true, setDefaultsOnInsert: true },
     );
     return res.status(201).json({ success: true, photoKey, url: uploaded.secure_url, inspectionId: inspection._id });
   } catch (error) {
@@ -976,7 +987,7 @@ export const uploadWeighingEvidence = async (req, res) => {
   try {
     const { id: instrumentId } = req.params;
     const testKey = req.body?.testType || "weighingTest";
-    if (!["weighingTest", "repeatabilityTest", "eccentricityTest", "tareTest"].includes(testKey)) {
+    if (!["weighingTest", "repeatabilityTest", "eccentricityTest", "tareTest", "sensitivityTest"].includes(testKey)) {
       return res.status(400).json({ success: false, message: "Invalid test type." });
     }
     if (!mongoose.isValidObjectId(instrumentId)) {
@@ -1004,7 +1015,7 @@ export const uploadWeighingEvidence = async (req, res) => {
     const updatedInspection = await Inspection.findOneAndUpdate(
       { _id: inspection._id },
       { $push: { [`${testKey}.evidence`]: evidenceItem } },
-      { new: true, runValidators: false },
+      { returnDocument: "after", runValidators: false },
     );
     return res.status(201).json({ success: true, evidence: updatedInspection?.[testKey]?.evidence || [] });
   } catch (error) {
@@ -1017,7 +1028,7 @@ export const deleteWeighingEvidence = async (req, res) => {
   try {
     const { id: instrumentId } = req.params;
     const { testType: testKey, url } = req.body || {};
-    const allowedTests = ["weighingTest", "repeatabilityTest", "eccentricityTest", "tareTest"];
+    const allowedTests = ["weighingTest", "repeatabilityTest", "eccentricityTest", "tareTest", "sensitivityTest"];
     if (!allowedTests.includes(testKey) || typeof url !== "string") {
       return res.status(400).json({ success: false, message: "A valid test and evidence image are required." });
     }
@@ -1269,7 +1280,7 @@ export const submitEccentricityObservations = async (req, res) => {
     const inspection = await Inspection.findOneAndUpdate(
       { instrumentId },
       { $set: { instrumentId, eccentricityTest: { testLoad: mongoose.Types.Decimal128.fromString(new Decimal(payload.testLoad).toFixed(4)), positions, evidence: existingInspection?.eccentricityTest?.evidence || [], passed } } },
-      { new: true, upsert: true, setDefaultsOnInsert: true }
+      { returnDocument: "after", upsert: true, setDefaultsOnInsert: true }
     );
     const evaluation = await Evaluation.findOne({ instrumentId }).sort({ createdAt: -1 });
     const testPlan = evaluation ? await TestPlan.findOne({ evaluationId: evaluation._id }) : null;
@@ -1324,7 +1335,7 @@ export const submitRepeatabilityObservations = async (req, res) => {
     const inspection = await Inspection.findOneAndUpdate(
       { instrumentId },
       { $set: { instrumentId, repeatabilityTest: { testType: "REPEATABILITY", verificationType, testLoad: mongoose.Types.Decimal128.fromString(testLoad.toFixed(4)), loadPercentageOfMax: 80, numberOfRuns: requiredRuns, runs: storedRuns, maxIndication: mongoose.Types.Decimal128.fromString(maxIndication.toFixed(4)), minIndication: mongoose.Types.Decimal128.fromString(minIndication.toFixed(4)), variation: mongoose.Types.Decimal128.fromString(variation.toFixed(4)), variationRange: mongoose.Types.Decimal128.fromString(variation.toFixed(4)), mpeLimit: mongoose.Types.Decimal128.fromString(mpeLimit.toFixed(4)), evidence: existingInspection?.repeatabilityTest?.evidence || [], passed } } },
-      { new: true, upsert: true, setDefaultsOnInsert: true },
+      { returnDocument: "after", upsert: true, setDefaultsOnInsert: true },
     );
     const evaluation = await Evaluation.findOne({ instrumentId }).sort({ createdAt: -1 });
     const testPlan = evaluation ? await TestPlan.findOne({ evaluationId: evaluation._id }) : null;
@@ -1367,7 +1378,7 @@ export const submitTareTest = async (req, res) => {
     });
     const passed = points.every((point) => point.passed);
     const existingInspection = await Inspection.findOne({ instrumentId: instrument._id });
-    const inspection = await Inspection.findOneAndUpdate({ instrumentId: instrument._id }, { $set: { tareTest: { tareType: instrument.tareType, tareValues: [mongoose.Types.Decimal128.fromString(tareValue.toFixed(4))], points, evidence: existingInspection?.tareTest?.evidence || [], passed } } }, { new: true, upsert: true, setDefaultsOnInsert: true });
+    const inspection = await Inspection.findOneAndUpdate({ instrumentId: instrument._id }, { $set: { tareTest: { tareType: instrument.tareType, tareValues: [mongoose.Types.Decimal128.fromString(tareValue.toFixed(4))], points, evidence: existingInspection?.tareTest?.evidence || [], passed } } }, { returnDocument: "after", upsert: true, setDefaultsOnInsert: true });
     const evaluation = await Evaluation.findOne({ instrumentId: instrument._id }).sort({ createdAt: -1 });
     const testPlan = evaluation ? await TestPlan.findOne({ evaluationId: evaluation._id }) : null;
     if (testPlan) { const test = testPlan.tests.find((item) => item.code === "TARE"); if (test) test.status = "COMPLETED"; testPlan.status = testPlan.tests.every((item) => item.status === "COMPLETED") ? "COMPLETED" : "IN_PROGRESS"; }
@@ -1375,6 +1386,102 @@ export const submitTareTest = async (req, res) => {
     await Promise.all([inspection.save(), testPlan?.save(), evaluation?.save()]);
     return res.json({ success: true, passed, points });
   } catch (error) { return res.status(400).json({ success: false, message: error.message }); }
+};
+
+const getSensitivityEligibility = (instrument) => {
+  const unitToMg = { kg: 1000000, g: 1000, mg: 1, t: 1000000000 };
+  const intervalMg = new Decimal(instrument.d.toString()).times(unitToMg[instrument.unit] ?? 1);
+  const isDigital = String(instrument.indicationType || "").toLowerCase() === "digital";
+  return { eligible: isDigital && intervalMg.gte(5), intervalMg };
+};
+
+const getSensitivityLoads = (instrument) => {
+  const min = new Decimal(instrument.min.toString());
+  const max = new Decimal(instrument.max.toString());
+  const interval = new Decimal(instrument.d.toString());
+  return [
+    { label: "Min", load: min },
+    { label: "½ Max", load: max.div(2) },
+    { label: "Max", load: max },
+  ].map((point, index) => ({ step: index + 1, ...point, additionalLoad: interval.times("1.4") }));
+};
+
+export const getSensitivityTestConfig = async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ success: false, message: "A valid instrument ID is required." });
+    const instrument = await Instrument.findById(req.params.id);
+    if (!instrument) return res.status(404).json({ success: false, message: "Instrument not found." });
+    const { eligible, intervalMg } = getSensitivityEligibility(instrument);
+    if (!eligible) return res.status(422).json({ success: false, message: "This digital discrimination workflow applies to digital instruments with d of at least 5 mg." });
+    const evaluation = await Evaluation.findOne({ instrumentId: instrument._id, testingOfficerId: req.user._id }).sort({ createdAt: -1 });
+    const testPlan = evaluation ? await TestPlan.findOne({ evaluationId: evaluation._id }) : null;
+    if (!evaluation || !testPlan?.tests?.some((test) => test.code === "SENSITIVITY")) return res.status(403).json({ success: false, message: "Sensitivity test is not available in this evaluation's test plan." });
+    const scaleInterval = new Decimal(instrument.d.toString());
+    const points = getSensitivityLoads(instrument).map(({ step, label, load, additionalLoad }) => ({ step, label, load: load.toString(), additionalLoad: additionalLoad.toString() }));
+    await Inspection.findOneAndUpdate(
+      { instrumentId: instrument._id },
+      { $setOnInsert: { instrumentId: instrument._id, evaluationId: evaluation._id } },
+      { upsert: true, setDefaultsOnInsert: true, returnDocument: "after" },
+    );
+    return res.json({ success: true, data: { instrument: instrument.toJSON(), applicationNumber: evaluation.applicationNumber, scaleInterval: scaleInterval.toString(), intervalMg: intervalMg.toString(), points } });
+  } catch (error) {
+    return res.status(400).json({ success: false, message: error.message || "Failed to load sensitivity test configuration." });
+  }
+};
+
+export const submitSensitivityTest = async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ success: false, message: "A valid instrument ID is required." });
+    const instrument = await Instrument.findById(req.params.id);
+    if (!instrument) return res.status(404).json({ success: false, message: "Instrument not found." });
+    if (!getSensitivityEligibility(instrument).eligible) return res.status(422).json({ success: false, message: "Sensitivity testing is unavailable for this instrument configuration." });
+    const evaluation = await Evaluation.findOne({ instrumentId: instrument._id, testingOfficerId: req.user._id }).sort({ createdAt: -1 });
+    const testPlan = evaluation ? await TestPlan.findOne({ evaluationId: evaluation._id }) : null;
+    const sensitivityTest = testPlan?.tests?.find((test) => test.code === "SENSITIVITY");
+    if (!evaluation || !sensitivityTest) return res.status(403).json({ success: false, message: "Sensitivity test is not available in this evaluation's test plan." });
+    const readings = req.body?.readings;
+    if (!Array.isArray(readings) || readings.length !== 3) return res.status(400).json({ success: false, message: "Exactly three sensitivity readings are required." });
+    const interval = new Decimal(instrument.d.toString());
+    const generatedPoints = getSensitivityLoads(instrument);
+    const points = readings.map((reading, index) => {
+      if (Number(reading.step) !== index + 1) throw new Error("Sensitivity readings must include steps 1, 2, and 3 in order.");
+      const initial = new Decimal(reading.initialIndication);
+      const final = new Decimal(reading.finalIndication);
+      if (!initial.isFinite() || !final.isFinite()) throw new Error(`Valid initial and final indications are required for step ${index + 1}.`);
+      const indicationChange = final.minus(initial);
+      // OIML R 76-1 A.4.8.2 requires a one-interval increase after adding 1.4 d.
+      // Use a half-interval acceptance band for observations entered at limited
+      // display precision; exact Decimal equality incorrectly rejects rounded readings.
+      const responseDetected = indicationChange.minus(interval).abs().lte(interval.div(2));
+      const passed = responseDetected;
+      const point = generatedPoints[index];
+      return {
+        step: point.step,
+        label: point.label,
+        load: mongoose.Types.Decimal128.fromString(point.load.toFixed(8)),
+        initialIndication: mongoose.Types.Decimal128.fromString(initial.toFixed(8)),
+        additionalLoad: mongoose.Types.Decimal128.fromString(point.additionalLoad.toFixed(8)),
+        finalIndication: mongoose.Types.Decimal128.fromString(final.toFixed(8)),
+        responseDetected,
+        passed,
+      };
+    });
+    const passed = points.every((point) => point.passed);
+    const existingInspection = await Inspection.findOne({ instrumentId: instrument._id });
+    const inspection = await Inspection.findOneAndUpdate(
+      { instrumentId: instrument._id },
+      { $set: { instrumentId: instrument._id, sensitivityTest: { points, evidence: existingInspection?.sensitivityTest?.evidence || [], passed } } },
+      { returnDocument: "after", upsert: true, setDefaultsOnInsert: true },
+    );
+    sensitivityTest.status = "COMPLETED";
+    testPlan.status = testPlan.tests.length && testPlan.tests.every((test) => test.status === "COMPLETED") ? "COMPLETED" : "IN_PROGRESS";
+    evaluation.testingStatus = testPlan.status === "COMPLETED" ? "COMPLETED" : "IN_PROGRESS";
+    evaluation.status = testPlan.status === "COMPLETED" ? "COMPLIANCE_EVALUATION" : "TESTING";
+    await Promise.all([inspection.save(), testPlan.save(), evaluation.save()]);
+    return res.json({ success: true, passed, points, inspectionId: inspection._id });
+  } catch (error) {
+    return res.status(400).json({ success: false, message: error.message || "Failed to submit sensitivity test." });
+  }
 };
 
 export const completeUnimplementedTest = async (req, res) => {
@@ -1385,6 +1492,7 @@ export const completeUnimplementedTest = async (req, res) => {
     if (!instrument || !evaluation || !testPlan) return res.status(404).json({ success: false, message: "Test plan not found." });
     const test = testPlan.tests.find((item) => item.code === req.params.code);
     if (!test) return res.status(404).json({ success: false, message: "Test not found in test plan." });
+    if (test.code === "SENSITIVITY") return res.status(400).json({ success: false, message: "Submit sensitivity readings to complete this test." });
     test.status = "COMPLETED";
     const complete = testPlan.tests.length > 0 && testPlan.tests.every((item) => item.status === "COMPLETED");
     testPlan.status = complete ? "COMPLETED" : "IN_PROGRESS";
@@ -1407,7 +1515,7 @@ export const getTareTestConfig = async (req, res) => {
     const points = [min, max.times(.25), max.times(.5), max.times(.75), max].map((netLoad, index) => ({
       step: index + 1, tareValue: tareValues[0].toFixed(4), netLoad: netLoad.toFixed(4), mpeLimit: e.toFixed(4),
     }));
-    const inspection = await Inspection.findOneAndUpdate({ instrumentId: instrument._id }, { $set: { tareTest: { tareType: instrument.tareType, tareValues: tareValues.map((value) => mongoose.Types.Decimal128.fromString(value.toFixed(4))), points, passed: false } } }, { new: true, upsert: true, setDefaultsOnInsert: true });
+    const inspection = await Inspection.findOneAndUpdate({ instrumentId: instrument._id }, { $set: { tareTest: { tareType: instrument.tareType, tareValues: tareValues.map((value) => mongoose.Types.Decimal128.fromString(value.toFixed(4))), points, passed: false } } }, { returnDocument: "after", upsert: true, setDefaultsOnInsert: true });
     const evaluation = await Evaluation.findOne({ instrumentId: instrument._id }).sort({ createdAt: -1 }).select("applicationNumber");
     return res.json({ success: true, data: { instrument: instrument.toJSON(), applicationNumber: evaluation?.applicationNumber || null, tareType: instrument.tareType, maximumTare: maximumTare.toFixed(4), tareValues: tareValues.map((value) => value.toFixed(4)), points: inspection.tareTest.points } });
   } catch (error) { return res.status(400).json({ success: false, message: error.message }); }
@@ -1422,7 +1530,7 @@ export const getEccentricityTestConfig = async (req, res) => {
     const e = new Decimal(instrument.e.toString());
     const load = new Decimal(instrument.max.toString()).div(3).div(e).round().times(e);
     const labels = ["Center", "Front-Left", "Rear-Left", "Rear-Right", "Front-Right"];
-    const inspection = await Inspection.findOneAndUpdate({ instrumentId }, { $setOnInsert: { instrumentId } }, { new: true, upsert: true, setDefaultsOnInsert: true });
+    const inspection = await Inspection.findOneAndUpdate({ instrumentId }, { $setOnInsert: { instrumentId } }, { returnDocument: "after", upsert: true, setDefaultsOnInsert: true });
     let points = inspection.eccentricityTest?.generatedPoints;
     if (!points?.length) {
       points = labels.map((label, index) => ({ step: index + 1, label, loadApplied: mongoose.Types.Decimal128.fromString(load.toFixed(4)), indication: null }));
@@ -1449,7 +1557,7 @@ export const getRepeatabilityTestConfig = async (req, res) => {
     const inspection = await Inspection.findOneAndUpdate(
       { instrumentId },
       { $setOnInsert: { instrumentId } },
-      { new: true, upsert: true, setDefaultsOnInsert: true },
+      { returnDocument: "after", upsert: true, setDefaultsOnInsert: true },
     );
 
     const accuracyClass = String(instrument.accuracyClass || "").trim().toUpperCase();

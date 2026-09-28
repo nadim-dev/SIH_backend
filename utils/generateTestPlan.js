@@ -6,6 +6,10 @@ const valueOf = (instrument, field) => {
     return new Decimal(instrument.max.toString())
       .times({ kg: 1, g: 0.001, mg: 0.000001, t: 1000 }[instrument.unit] ?? 1)
       .toNumber();
+  if (field === "dMg")
+    return new Decimal(instrument.d.toString())
+      .times({ kg: 1000000, g: 1000, mg: 1, t: 1000000000 }[instrument.unit] ?? 1)
+      .toNumber();
   if (field === "tareDevice") return instrument.tareDevice === "Yes";
   if (field === "technology")
     return String(instrument.technology).toUpperCase();

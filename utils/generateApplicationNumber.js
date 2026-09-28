@@ -5,7 +5,7 @@ export const generateApplicationNumber = async () => {
     { name: "application" },
     { $inc: { sequence: 1 } },
     {
-      new: true,
+      returnDocument: "after",
       upsert: true
     }
   );

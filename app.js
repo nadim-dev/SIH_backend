@@ -9,6 +9,7 @@ import laboratoryRoutes from "./routes/laboratoryRoutes.js";
 import auditLogRoutes from "./routes/auditLogRoutes.js";
 import adminDashboardRoutes from "./routes/adminDashboardRoutes.js";
 import assistantRoutes from "./routes/assistantRoutes.js";
+import testDraftRoutes from "./routes/testDraftRoutes.js";
 
 const app = express();
 
@@ -31,6 +32,7 @@ app.use("/api/laboratories", laboratoryRoutes);
 app.use("/api/audit-logs", auditLogRoutes);
 app.use("/api/admin/dashboard", adminDashboardRoutes);
 app.use("/api/assistant", assistantRoutes);
+app.use("/api/test-drafts", testDraftRoutes);
 
 const startServer = async () => {
   try {

@@ -1,5 +1,5 @@
 import express from "express";
-import { registerInstrument, getMyEvaluations, getTestingDashboardSummary, getSupervisorEvaluations, getEvaluationDocuments, uploadEvaluationDocument, completeEvaluationDocuments, saveEvaluationEnvironment, generateTestPlanController, getTestExecutionData, reviewSupervisorEvaluation, getGeneratedReport, getGeneratedReports, getAllGeneratedReportsAdmin, verifyReport, getInstrumentForTesting, getWeighingTestConfig, getRepeatabilityTestConfig, getEccentricityTestConfig, getTareTestConfig, submitTareTest, completeUnimplementedTest, uploadGeneralExaminationPhoto, extractRegistrationNameplateOcr, extractNameplateOcr, uploadWeighingEvidence, deleteWeighingEvidence, submitGeneralExamination, submitInstrumentObservations, submitEccentricityObservations, submitRepeatabilityObservations, submitFullInspection, getPendingApprovalInspections, getApprovedInspectionReports, verifyCertificate, approveInspection } from "../controllers/instrumentController.js";
+import { registerInstrument, getMyEvaluations, getTestingDashboardSummary, getSupervisorEvaluations, getEvaluationDocuments, uploadEvaluationDocument, completeEvaluationDocuments, saveEvaluationEnvironment, generateTestPlanController, getTestExecutionData, reviewSupervisorEvaluation, getGeneratedReport, getGeneratedReports, getAllGeneratedReportsAdmin, verifyReport, getInstrumentForTesting, getWeighingTestConfig, getRepeatabilityTestConfig, getEccentricityTestConfig, getTareTestConfig, getSensitivityTestConfig, submitSensitivityTest, submitTareTest, completeUnimplementedTest, uploadGeneralExaminationPhoto, extractRegistrationNameplateOcr, extractNameplateOcr, uploadWeighingEvidence, deleteWeighingEvidence, submitGeneralExamination, submitInstrumentObservations, submitEccentricityObservations, submitRepeatabilityObservations, submitFullInspection, getPendingApprovalInspections, getApprovedInspectionReports, verifyCertificate, approveInspection } from "../controllers/instrumentController.js";
 
 import { uploadInstrumentPicture } from "../middleware/instrumentPictureUpload.js";
 import { uploadEvaluationDocument as documentUpload } from "../middleware/evaluationDocumentUpload.js";
@@ -46,6 +46,8 @@ router.get('/:id/weighing-test/config', checkAuth, getWeighingTestConfig);
 router.get('/:id/repeatability-test/config', checkAuth, getRepeatabilityTestConfig);
 router.get('/:id/eccentricity-test/config', checkAuth, getEccentricityTestConfig);
 router.get('/:id/tare-test/config', checkAuth, getTareTestConfig);
+router.get('/:id/sensitivity-test/config', checkAuth, getSensitivityTestConfig);
+router.post('/:id/submit-sensitivity', checkAuth, submitSensitivityTest);
 router.post('/:id/submit-tare', submitTareTest);
 router.post('/:id/complete-test/:code', checkAuth, completeUnimplementedTest);
 router.post('/:id/submit-observations', submitInstrumentObservations);

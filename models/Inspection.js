@@ -41,6 +41,16 @@ const TarePointSchema = new mongoose.Schema({
   mpeLimit: { type: mongoose.Schema.Types.Decimal128, required: true },
   passed: { type: Boolean, required: true },
 }, { _id: false });
+const SensitivityPointSchema = new mongoose.Schema({
+  step: { type: Number, required: true },
+  label: { type: String, required: true },
+  load: { type: mongoose.Schema.Types.Decimal128, required: true },
+  initialIndication: { type: mongoose.Schema.Types.Decimal128, required: true },
+  additionalLoad: { type: mongoose.Schema.Types.Decimal128, required: true },
+  finalIndication: { type: mongoose.Schema.Types.Decimal128, required: true },
+  responseDetected: { type: Boolean, required: true },
+  passed: { type: Boolean, required: true },
+}, { _id: false });
 
 const InspectionSchema = new mongoose.Schema(
   {
@@ -111,6 +121,11 @@ const InspectionSchema = new mongoose.Schema(
       tareType: String,
       tareValues: [mongoose.Schema.Types.Decimal128],
       points: [TarePointSchema],
+      evidence: [{ url: String, publicId: String, uploadedAt: { type: Date, default: Date.now }, location: { latitude: Number, longitude: Number, address: String } }],
+      passed: { type: Boolean, default: false },
+    },
+    sensitivityTest: {
+      points: [SensitivityPointSchema],
       evidence: [{ url: String, publicId: String, uploadedAt: { type: Date, default: Date.now }, location: { latitude: Number, longitude: Number, address: String } }],
       passed: { type: Boolean, default: false },
     },

@@ -118,7 +118,7 @@ export const reviewNonComplianceReport = async (req, res) => {
           laboratoryName: supervisor?.labId?.name || null,
           approvedAt,
         } },
-        { new: true, upsert: true, setDefaultsOnInsert: true },
+        { returnDocument: "after", upsert: true, setDefaultsOnInsert: true },
       );
       generatedReport.reportHash = createReportHash(generatedReport.toObject());
       const frontendUrl = (process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/$/, "");

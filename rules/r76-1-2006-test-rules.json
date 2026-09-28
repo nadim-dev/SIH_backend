@@ -75,6 +75,27 @@
       }
     },
     {
+      "code": "SENSITIVITY",
+      "name": "Sensitivity Test",
+      "description": "Digital discrimination check at Min, half Max, and Max using an additional load of 1.4 times d.",
+      "category": "PERFORMANCE",
+      "clause": "3.8.2.2, A.4.8.2",
+      "selection": {
+        "all": [
+          {
+            "field": "indicationType",
+            "operator": "EQ",
+            "value": "Digital"
+          },
+          {
+            "field": "dMg",
+            "operator": "GTE",
+            "value": 5
+          }
+        ]
+      }
+    },
+    {
       "code": "ENDURANCE",
       "name": "Endurance Test",
       "description": "Verification of metrological performance after repeated loading cycles.",

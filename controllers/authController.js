@@ -36,7 +36,7 @@ export const updateAdminUserStatus = async (req, res) => {
     const user = await User.findOneAndUpdate(
       { _id: userId, role: { $nin: ["NAWI_ADMIN", "ADMIN", "ADMINISTRATOR", "Admin"] } },
       { $set: { status } },
-      { new: true },
+      { returnDocument: "after" },
     ).select("_id name email role officerId status").lean();
     if (!user) return res.status(404).json({ message: "User not found." });
     await recordAudit(req, { action: status === "INACTIVE" ? "User Deactivated" : "User Activated", details: `${status === "INACTIVE" ? "Deactivated" : "Activated"} the account for ${user.name}.`, relatedTo: user.officerId || String(user._id), relatedModel: "User" });
@@ -138,7 +138,7 @@ export const deactivateTestingOfficer = async (req, res) => {
     const officer = await User.findOneAndUpdate(
       { _id: userId, role: "TESTING OFFICER", supervisorId: req.user._id },
       { $set: { status: "INACTIVE" } },
-      { new: true }
+      { returnDocument: "after" }
     ).select("_id name email officerId status").lean();
     if (!officer) return res.status(404).json({ message: "Testing officer not found in your laboratory." });
     await recordAudit(req, { action: "User Deactivated", details: `Deactivated the testing officer account for ${officer.name}.`, relatedTo: officer.officerId || String(officer._id), relatedModel: "User" });
@@ -157,7 +157,7 @@ export const activateTestingOfficer = async (req, res) => {
     const officer = await User.findOneAndUpdate(
       { _id: userId, role: "TESTING OFFICER", supervisorId: req.user._id },
       { $set: { status: "ACTIVE" } },
-      { new: true }
+      { returnDocument: "after" }
     ).select("_id name email officerId status").lean();
     if (!officer) return res.status(404).json({ message: "Testing officer not found in your laboratory." });
     return res.status(200).json({ message: "Testing officer activated.", officer });
@@ -183,7 +183,7 @@ export const createTestingOfficer = async (req, res) => {
     const counter = await Counter.findOneAndUpdate(
       { name: "testingOfficerId" },
       { $inc: { sequence: 1 } },
-      { new: true, upsert: true, setDefaultsOnInsert: true }
+      { returnDocument: "after", upsert: true, setDefaultsOnInsert: true }
     );
     const officerId = `TO-${100 + counter.sequence}`;
     const passwordHash = await bcrypt.hash(password, 12);
@@ -257,7 +257,7 @@ export const updateMyProfile = async (req, res) => {
     if (gender && !["Female", "Male", "Non-binary", "Prefer not to say"].includes(gender)) return res.status(400).json({ message: "Select a valid gender option." });
     if (dateOfBirth && (Number.isNaN(dateOfBirth.getTime()) || dateOfBirth > new Date())) return res.status(400).json({ message: "Enter a valid date of birth." });
 
-    const user = await User.findByIdAndUpdate(req.user._id, { $set: { name, phone, gender, dateOfBirth } }, { new: true, runValidators: true })
+    const user = await User.findByIdAndUpdate(req.user._id, { $set: { name, phone, gender, dateOfBirth } }, { returnDocument: "after", runValidators: true })
       .select("name email role accountStatus phone dateOfBirth gender officerId profileImage createdAt labId").lean();
     if (!user) return res.status(404).json({ message: "User account not found." });
     return res.status(200).json({ message: "Profile updated.", currentUser: user });
