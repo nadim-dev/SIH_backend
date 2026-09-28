@@ -528,6 +528,7 @@ export const reviewSupervisorEvaluation = async (req, res) => {
             supervisorId: req.user._id,
             laboratoryName: laboratory?.name || null,
             laboratoryDetails,
+            complianceStatus: evaluation.complianceStatus,
             approvedAt,
           },
         },
@@ -607,11 +608,29 @@ export const verifyReport = async (req, res) => {
     const report = await Report.findById(req.params.reportId);
     if (!report) return res.status(404).json({ success: false, message: "Report not found." });
     const currentHash = createReportHash(report.toObject());
-    const [instrument, evaluation] = await Promise.all([
+    const [instrument, evaluation, supervisor, supervisorLaboratory] = await Promise.all([
       Instrument.findById(report.instrumentId).select("manufacturer modelNumber serialNumber").lean(),
-      Evaluation.findById(report.evaluationId).select("applicationNumber").lean(),
+      Evaluation.findById(report.evaluationId).select("applicationNumber complianceStatus testingOfficerId").populate({ path: "testingOfficerId", select: "labId", populate: { path: "labId", select: "name" } }).lean(),
+      User.findById(report.supervisorId).select("labId").populate({ path: "labId", select: "name" }).lean(),
+      report.supervisorId
+        ? Laboratory.findOne({ supervisorId: report.supervisorId }).select("name").lean()
+        : Promise.resolve(null),
     ]);
     const applicationNumber = evaluation?.applicationNumber || null;
+    const laboratoryName = report.laboratoryDetails?.name || report.laboratoryName || supervisor?.labId?.name || supervisorLaboratory?.name || evaluation?.testingOfficerId?.labId?.name || null;
+    const testResultFields = [
+      ["General Examination", report.testResults?.generalExamination?.passed],
+      ["Weighing Performance", report.testResults?.weighingTest?.passed],
+      ["Repeatability", report.testResults?.repeatabilityTest?.passed],
+      ["Eccentricity", report.testResults?.eccentricityTest?.passed],
+      ["Tare Test", report.testResults?.tareTest?.passed],
+    ];
+    const tests = testResultFields
+      .filter(([, passed]) => typeof passed === "boolean")
+      .map(([name, passed]) => ({ name, passed }));
+    const derivedComplianceStatus = tests.length
+      ? tests.every((test) => test.passed) ? "COMPLIANT" : "NON_COMPLIANT"
+      : null;
     return res.json({
       success: true,
       valid: Boolean(report.reportHash) && currentHash === report.reportHash,
@@ -622,8 +641,10 @@ export const verifyReport = async (req, res) => {
         approvedAt: report.approvedAt,
         applicationNumber,
         reportNumber: applicationNumber ? `NAWI/TR/${applicationNumber.replace(/^NAWI-/, "")}` : null,
+        laboratoryName,
         instrument,
-        complianceStatus: report.testResults?.complianceStatus || report.testResults?.complianceResult,
+        complianceStatus: report.complianceStatus || evaluation?.complianceStatus || report.testResults?.complianceStatus || report.testResults?.complianceResult || derivedComplianceStatus,
+        tests,
       },
     });
   } catch (error) {
