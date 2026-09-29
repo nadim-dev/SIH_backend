@@ -1415,7 +1415,7 @@ export const getSensitivityTestConfig = async (req, res) => {
     if (!eligible) return res.status(422).json({ success: false, message: "This digital discrimination workflow applies to digital instruments with d of at least 5 mg." });
     const evaluation = await Evaluation.findOne({ instrumentId: instrument._id, testingOfficerId: req.user._id }).sort({ createdAt: -1 });
     const testPlan = evaluation ? await TestPlan.findOne({ evaluationId: evaluation._id }) : null;
-    if (!evaluation || !testPlan?.tests?.some((test) => test.code === "SENSITIVITY")) return res.status(403).json({ success: false, message: "Sensitivity test is not available in this evaluation's test plan." });
+    if (!evaluation || !testPlan?.tests?.some((test) => test.code === "SENSITIVITY")) return res.status(403).json({ success: false, message: "Discrimination test is not available in this evaluation's test plan." });
     const scaleInterval = new Decimal(instrument.d.toString());
     const points = getSensitivityLoads(instrument).map(({ step, label, load, additionalLoad }) => ({ step, label, load: load.toString(), additionalLoad: additionalLoad.toString() }));
     await Inspection.findOneAndUpdate(
@@ -1425,7 +1425,7 @@ export const getSensitivityTestConfig = async (req, res) => {
     );
     return res.json({ success: true, data: { instrument: instrument.toJSON(), applicationNumber: evaluation.applicationNumber, scaleInterval: scaleInterval.toString(), intervalMg: intervalMg.toString(), points } });
   } catch (error) {
-    return res.status(400).json({ success: false, message: error.message || "Failed to load sensitivity test configuration." });
+    return res.status(400).json({ success: false, message: error.message || "Failed to load discrimination test configuration." });
   }
 };
 
@@ -1434,11 +1434,11 @@ export const submitSensitivityTest = async (req, res) => {
     if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ success: false, message: "A valid instrument ID is required." });
     const instrument = await Instrument.findById(req.params.id);
     if (!instrument) return res.status(404).json({ success: false, message: "Instrument not found." });
-    if (!getSensitivityEligibility(instrument).eligible) return res.status(422).json({ success: false, message: "Sensitivity testing is unavailable for this instrument configuration." });
+    if (!getSensitivityEligibility(instrument).eligible) return res.status(422).json({ success: false, message: "Discrimination testing is unavailable for this instrument configuration." });
     const evaluation = await Evaluation.findOne({ instrumentId: instrument._id, testingOfficerId: req.user._id }).sort({ createdAt: -1 });
     const testPlan = evaluation ? await TestPlan.findOne({ evaluationId: evaluation._id }) : null;
     const sensitivityTest = testPlan?.tests?.find((test) => test.code === "SENSITIVITY");
-    if (!evaluation || !sensitivityTest) return res.status(403).json({ success: false, message: "Sensitivity test is not available in this evaluation's test plan." });
+    if (!evaluation || !sensitivityTest) return res.status(403).json({ success: false, message: "Discrimination test is not available in this evaluation's test plan." });
     const readings = req.body?.readings;
     if (!Array.isArray(readings) || readings.length !== 3) return res.status(400).json({ success: false, message: "Exactly three sensitivity readings are required." });
     const interval = new Decimal(instrument.d.toString());
@@ -1480,7 +1480,7 @@ export const submitSensitivityTest = async (req, res) => {
     await Promise.all([inspection.save(), testPlan.save(), evaluation.save()]);
     return res.json({ success: true, passed, points, inspectionId: inspection._id });
   } catch (error) {
-    return res.status(400).json({ success: false, message: error.message || "Failed to submit sensitivity test." });
+    return res.status(400).json({ success: false, message: error.message || "Failed to submit discrimination test." });
   }
 };
 

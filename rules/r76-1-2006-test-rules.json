@@ -76,7 +76,7 @@
     },
     {
       "code": "SENSITIVITY",
-      "name": "Sensitivity Test",
+      "name": "Discrimination Test",
       "description": "Digital discrimination check at Min, half Max, and Max using an additional load of 1.4 times d.",
       "category": "PERFORMANCE",
       "clause": "3.8.2.2, A.4.8.2",
