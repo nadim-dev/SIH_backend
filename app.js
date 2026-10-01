@@ -17,8 +17,11 @@ const PORT = process.env.PORT || 4000;
 const mySecretKey = process.env.mySecretKey;
 
 app.use(cors({
-  // Reflect the requesting origin so deployed and local frontends can connect.
-  origin: true,
+  origin: [
+    "https://nawipro.netlify.app",
+    "https://nawipro12.netlify.app",
+    "http://localhost:5173",
+  ],
   credentials: true,
 }));
 
