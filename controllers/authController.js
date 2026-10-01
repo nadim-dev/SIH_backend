@@ -305,12 +305,8 @@ export const loginUser = async (req, res) => {
 
    
 
- if (user.role == "Supervisor" &&
-  user.accountStatus !== "active"
-) {
-  return res.status(403).json({
-    message: "Your registration is awaiting admin approval.",
-  });
+ if (user.role == "Supervisor" && user.accountStatus !== "active") {
+  return res.status(403).json({message: "Your registration is awaiting admin approval." });
 }
 
 
