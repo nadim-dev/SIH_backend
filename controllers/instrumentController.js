@@ -2717,13 +2717,12 @@ export const submitSensitivityTest = async (req, res) => {
           `Valid initial and final indications are required for step ${index + 1}.`,
         );
       const indicationChange = final.minus(initial);
-      // OIML R 76-1 A.4.8.2 requires a one-interval increase after adding 1.4 d.
-      // Use a half-interval acceptance band for observations entered at limited
-      // display precision; exact Decimal equality incorrectly rejects rounded readings.
-      const responseDetected = indicationChange
-        .minus(interval)
-        .abs()
-        .lte(interval.div(2));
+      // Digital indications must lie on the actual scale intervals, and
+      // 1.4 d must produce an increase of exactly one interval.
+      const indicationsOnScale =
+        initial.mod(interval).isZero() && final.mod(interval).isZero();
+      const responseDetected =
+        indicationsOnScale && indicationChange.eq(interval);
       const passed = responseDetected;
       const point = generatedPoints[index];
       return {
