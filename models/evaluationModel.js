@@ -45,9 +45,7 @@ const evaluationSchema = new mongoose.Schema(
        enum: [
          "DOCUMENTS_PENDING",
          "DOCUMENT_REVIEW",
-     
          "ENVIRONMENT_PENDING",
-     
          "TEST_PLAN_PENDING",
          "TESTING",
          "COMPLIANCE_EVALUATION",
@@ -59,11 +57,7 @@ const evaluationSchema = new mongoose.Schema(
       ],
        default: "DOCUMENTS_PENDING",
        index: true,
-     },     
-
-    // --------------------------------------------------
-    // WORKFLOW PROGRESS
-    // --------------------------------------------------
+     },       
 
     documentsStatus: {
       type: String,
@@ -162,6 +156,11 @@ const evaluationSchema = new mongoose.Schema(
       type: String,
       trim: true,
       default: null,
+    },
+
+    correctionTestCodes: {
+      type: [String],
+      default: [],
     },
 
     reviewedAt: {
