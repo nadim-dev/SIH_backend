@@ -621,14 +621,26 @@ export const verifyReport = async (req, res) => {
     const currentHash = createReportHash(report.toObject());
     const [instrument, evaluation, supervisor, supervisorLaboratory] = await Promise.all([
       Instrument.findById(report.instrumentId).select("manufacturer modelNumber serialNumber").lean(),
-      Evaluation.findById(report.evaluationId).select("applicationNumber complianceStatus testingOfficerId").populate({ path: "testingOfficerId", select: "labId", populate: { path: "labId", select: "name" } }).lean(),
-      User.findById(report.supervisorId).select("labId").populate({ path: "labId", select: "name" }).lean(),
+      Evaluation.findById(report.evaluationId).select("applicationNumber complianceStatus testingOfficerId").populate({ path: "testingOfficerId", select: "labId", populate: { path: "labId", select: "name address city state pinCode officialEmail contactNumber" } }).lean(),
+      User.findById(report.supervisorId).select("labId").populate({ path: "labId", select: "name address city state pinCode officialEmail contactNumber" }).lean(),
       report.supervisorId
-        ? Laboratory.findOne({ supervisorId: report.supervisorId }).select("name").lean()
+        ? Laboratory.findOne({ supervisorId: report.supervisorId }).select("name address city state pinCode officialEmail contactNumber").lean()
         : Promise.resolve(null),
     ]);
     const applicationNumber = evaluation?.applicationNumber || null;
-    const laboratoryName = report.laboratoryDetails?.name || report.laboratoryName || supervisor?.labId?.name || supervisorLaboratory?.name || evaluation?.testingOfficerId?.labId?.name || null;
+    const linkedLaboratory = supervisor?.labId || supervisorLaboratory || evaluation?.testingOfficerId?.labId || {};
+    const laboratoryDetails = {
+      ...linkedLaboratory,
+      ...(report.laboratoryDetails || {}),
+      name: report.laboratoryDetails?.name || report.laboratoryName || linkedLaboratory.name || null,
+      address: report.laboratoryDetails?.address || linkedLaboratory.address || null,
+      city: report.laboratoryDetails?.city || linkedLaboratory.city || null,
+      state: report.laboratoryDetails?.state || linkedLaboratory.state || null,
+      pinCode: report.laboratoryDetails?.pinCode || linkedLaboratory.pinCode || null,
+      officialEmail: report.laboratoryDetails?.officialEmail || linkedLaboratory.officialEmail || null,
+      contactNumber: report.laboratoryDetails?.contactNumber || linkedLaboratory.contactNumber || null,
+    };
+    const laboratoryName = laboratoryDetails.name;
     const testResultFields = [
       ["General Examination", report.testResults?.generalExamination?.passed],
       ["Weighing Performance", report.testResults?.weighingTest?.passed],
@@ -639,6 +651,10 @@ export const verifyReport = async (req, res) => {
     const tests = testResultFields
       .filter(([, passed]) => typeof passed === "boolean")
       .map(([name, passed]) => ({ name, passed }));
+    const discriminationTest = report.testResults?.sensitivityTest;
+    if (Array.isArray(discriminationTest?.points) && discriminationTest.points.length > 0 && typeof discriminationTest.passed === "boolean") {
+      tests.push({ name: "Discrimination Test", passed: discriminationTest.passed });
+    }
     const derivedComplianceStatus = tests.length
       ? tests.every((test) => test.passed) ? "COMPLIANT" : "NON_COMPLIANT"
       : null;
@@ -653,6 +669,7 @@ export const verifyReport = async (req, res) => {
         applicationNumber,
         reportNumber: applicationNumber ? `NAWI/TR/${applicationNumber.replace(/^NAWI-/, "")}` : null,
         laboratoryName,
+        laboratoryDetails,
         instrument,
         complianceStatus: report.complianceStatus || evaluation?.complianceStatus || report.testResults?.complianceStatus || report.testResults?.complianceResult || derivedComplianceStatus,
         tests,
