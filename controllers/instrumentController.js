@@ -793,8 +793,9 @@ export const reviewSupervisorEvaluation = async (req, res) => {
       }
       evaluation.correctionTestCodes = selectedCodes;
       evaluation.testingStatus = "IN_PROGRESS";
+      evaluation.testPlanStatus = "IN_PROGRESS";
       evaluation.progress = Math.min(evaluation.progress || 75, 74);
-      evaluation.testPlanStatus = "COMPLETED";
+      testPlan.status = "IN_PROGRESS";
       await testPlan.save();
     } else {
       evaluation.correctionTestCodes = [];
