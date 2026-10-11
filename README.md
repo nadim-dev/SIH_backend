@@ -4,6 +4,8 @@
 
 The service provides the application API used by the NAWI Pro web client. It manages identity and access, laboratories, instrument workflows, test records, evidence, review, reports, certificates, notifications, and audit history. Inspection workflows are informed by OIML R 76 requirements; this software is a workflow tool and should not be treated as a substitute for applicable standards or authorized metrology procedures.
 
+For the web application setup and usage, see the [Frontend README](https://github.com/nadim-dev/SIH-frontend/blob/main/README.md).
+
 ## Contents
 
 - [Capabilities](#capabilities)
@@ -192,5 +194,5 @@ backend/
 
 ## Related documentation
 
-- [Frontend README](../frontend/README.md)
+- [Frontend README](https://github.com/nadim-dev/SIH-frontend/blob/main/README.md)
 - [Backend package scripts and dependencies](package.json)
